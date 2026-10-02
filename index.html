@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Avora</title>
+    <script>
+      (function() {
+        function logError(data) {
+          try {
+            fetch('/api/log-error', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data)
+            }).catch(err => console.error('Failed to log error to backend:', err));
+          } catch(e) {}
+        }
+        window.addEventListener('error', function(event) {
+          const msg = String(event.message || '').toLowerCase();
+          if (msg.includes("script error")) return;
+
+          logError({
+            type: 'error',
+            message: event.message,
+            source: event.filename,
+            lineno: event.lineno,
+            colno: event.colno,
+            errorStack: event.error ? (event.error.stack || event.error.message) : null
+          });
+        });
+        window.addEventListener('unhandledrejection', function(event) {
+          const reason = event.reason;
+          const msg = reason ? (reason.message || String(reason)) : '';
+          if (
+            msg.includes("WebSocket") || 
+            msg.includes("websocket") || 
+            msg.includes("vite") || 
+            msg.includes("closed without opened")
+          ) return;
+
+          logError({
+            type: 'unhandledrejection',
+            message: event.reason ? (event.reason.message || String(event.reason)) : 'No reason provided',
+            errorStack: event.reason instanceof Error ? event.reason.stack : String(event.reason)
+          });
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Inter:wght@400;500;600;700&family=League+Spartan:wght@700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Playfair Display", ui-serif, Georgia, serif;
+  --font-cinzel: "Cinzel", ui-serif, Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-spartan: "League Spartan", ui-sans-serif, system-ui, sans-serif;
+
+  /* Extended high-readability design system colors to support custom page elements */
+  --color-stone-850: #171717; /* neutral-900 instead of brownish #221f1d */
+  --color-stone-955: #000000; /* pure black instead of brownish #0c0a09 */
+  
+  --color-red-650: #be123c;
+  --color-red-850: #7f1d1d;
+  
+  --color-emerald-650: #047857;
+  --color-emerald-850: #064e3b;
+  --color-emerald-955: #022c22;
+  
+  --color-pink-850: #831843;
+  --color-orange-850: #7c2d12;
+  --color-purple-850: #581c87;
+  --color-cyan-850: #164e63;
+  
+  --color-yellow-105: #fefce8;
+  --color-yellow-850: #713f12;
+  
+  --color-lime-850: #365314;
+  --color-rose-850: #881337;
+  --color-violet-850: #4c1d95;
+  --color-teal-850: #115e59;
+
+  --color-amber-955: #451a03;
+  --color-blue-955: #172554;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+@layer utilities {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #e5e7eb transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #e5e7eb;
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #d1d5db;
+  }
+}
+
+/* Custom Red Styling for Lightbox Close Buttons */
+.yarl__button_close {
+  background-color: #dc2626 !important; /* bg-red-600 */
+  color: #ffffff !important;
+  border: 1.5px solid #f87171 !important; /* border-red-400 */
+  border-radius: 9999px !important;
+  padding: 8px !important;
+  margin: 16px !important;
+  box-shadow: 0 10px 20px rgba(220, 38, 38, 0.4) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.yarl__button_close:hover {
+  background-color: #ef4444 !important; /* bg-red-500 */
+  transform: scale(1.08) !important;
+}
+
+.yarl__button_close:active {
+  transform: scale(0.92) !important;
+}

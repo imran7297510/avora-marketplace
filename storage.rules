@@ -1,0 +1,52 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Default deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // Public marketplace listings and profile avatars (images only, max 10MB)
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Protected Credit Purchase Payment Proofs (receipts/screenshots, max 10MB)
+    match /credit_proofs/{userId}/{applicationId}/{fileName} {
+      allow read: if request.auth != null && (
+        request.auth.uid == userId ||
+        request.auth.token.email.lower() == "imran7297510@gmail.com" ||
+        request.auth.token.email.lower() == "imran7297510@gmail" ||
+        request.auth.token.admin == true ||
+        request.auth.token.isAdmin == true ||
+        request.auth.token.isSuperAdmin == true ||
+        request.auth.token.isPaymentVerifier == true
+      );
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // Strictly protected KYC document uploads (CNIC, passport, selfies, max 10MB)
+    match /kyc/{userId}/{allPaths=**} {
+      allow read: if request.auth != null && (
+        request.auth.uid == userId ||
+        request.auth.token.email.lower() == "imran7297510@gmail.com" ||
+        request.auth.token.email.lower() == "imran7297510@gmail" ||
+        request.auth.token.admin == true ||
+        request.auth.token.isAdmin == true ||
+        request.auth.token.isSuperAdmin == true ||
+        request.auth.token.isPaymentVerifier == true
+      );
+      allow write: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+  }
+}
+

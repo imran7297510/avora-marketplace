@@ -1,0 +1,8 @@
+{
+  "name": "Avora",
+  "description": "Pakistan\u0027s trusted classified marketplace for buying and selling everyday items, vehicles, properties, electronics, and services.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
