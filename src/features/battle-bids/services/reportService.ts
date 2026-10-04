@@ -107,17 +107,6 @@ export const ReportService = {
           });
         }
 
-        // 5. Update Moderation Metrics (Write 3, excluded for user targetType)
-        if (targetType === 'listing' || targetType === 'negotiation') {
-          const metricsRef = doc(db, 'system_metrics', 'moderation');
-          transaction.set(metricsRef, {
-            allReportsCount: increment(1),
-            availableReportsCount: increment(1),
-            pendingReportsCount: increment(1),
-            lastUpdated: serverTimestamp()
-          }, { merge: true });
-        }
-
         moderationMetricsService.clearCache();
         return reportId;
       });

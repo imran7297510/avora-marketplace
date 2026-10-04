@@ -7,9 +7,9 @@ if (!getApps().length) {
 
 /**
  * Master named Firestore database instance target
- * Target: treasure-hub-pk / ai-studio-c5cea893-acec-4774-a11e-e26679ae7862
+ * Target: treasure-hub-pk / ai-studio-c5cea893-acec-4774-a11a-e26679ae7862
  */
-const db = getFirestore('ai-studio-c5cea893-acec-4774-a11e-e26679ae7862');
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 const EXPIRATION_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 Hours in milliseconds
 

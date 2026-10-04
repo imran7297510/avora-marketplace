@@ -514,21 +514,6 @@ export const NegotiationService = {
           currencySymbol: auctionData.currencySymbol || 'Rs.'
         });
 
-        // Create notification for seller (for normal Battle Bids; Private Negotiations are handled by trusted Cloud Function trigger)
-        if (sellerId && !sellerId.startsWith('anon_seller_')) {
-          const notifRef = doc(collection(db, 'users', sellerId, 'notifications'));
-          transaction.set(notifRef, {
-            type: 'private_offer',
-            title: 'New Tactical Proposal',
-            message: `A buyer has sent a private offer of ${auctionData.currencySymbol || auctionData.currency || 'Rs.'}${initialOffer.toLocaleString()} for your asset.`,
-            link: `/negotiations/timeline/${negRef.id}`,
-            auctionId,
-            userId: sellerId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-        }
-
         return negRef.id;
       });
 
@@ -777,20 +762,6 @@ export const NegotiationService = {
               currency: auctionData.currency || 'PKR',
               currencySymbol: auctionData.currencySymbol || 'Rs.'
             });
-
-            if (targetBuyerId && targetBuyerId !== 'buyer') {
-              const notifRef = doc(collection(db, 'users', targetBuyerId, 'notifications'));
-              transaction.set(notifRef, {
-                type: 'private_offer',
-                title: 'Tactical Counter-Offer',
-                message: `The seller has proposed a counter-offer of ${auctionData.currencySymbol || auctionData.currency || 'Rs.'}${amount.toLocaleString()} for ${auctionData.title || 'the asset'}.`,
-                link: `/negotiations/timeline/${negId}`,
-                auctionId: extractedAuctionId,
-                userId: targetBuyerId,
-                isRead: false,
-                timestamp: serverTimestamp()
-              });
-            }
           });
           return;
         }
@@ -941,20 +912,6 @@ export const NegotiationService = {
             timestamp: serverTimestamp(),
             action: 'send'
           });
-
-          if (sellerId && !sellerId.startsWith('anon_seller_')) {
-            const notifRef = doc(collection(db, 'users', sellerId, 'notifications'));
-            transaction.set(notifRef, {
-              type: 'private_offer',
-              title: 'New Tactical Proposal',
-              message: `A buyer has sent a private offer of ${auctionData.currencySymbol || auctionData.currency || 'Rs.'}${amount.toLocaleString()} for your asset.`,
-              link: `/negotiations/timeline/${negId}`,
-              auctionId: extractedAuctionId,
-              userId: sellerId,
-              isRead: false,
-              timestamp: serverTimestamp()
-            });
-          }
         });
         return;
       }
@@ -1166,22 +1123,6 @@ export const NegotiationService = {
           currency: negData.currency || 'PKR',
           currencySymbol: negData.currencySymbol || 'Rs.'
         });
-
-        // Notify other party (Seller->buyer delivers to buyer UID; Private buyer->seller is handled by trusted Cloud Function trigger)
-        const recipientId = userId === negData.buyerId ? negData.sellerId : negData.buyerId;
-        if (recipientId && !recipientId.startsWith('anon_seller_')) {
-          const notifRef = doc(collection(db, 'users', recipientId, 'notifications'));
-          transaction.set(notifRef, {
-            type: 'private_offer',
-            title: 'Tactical Counter-Offer',
-            message: `The ${userId === negData.buyerId ? 'buyer' : 'seller'} has proposed a new deal: ${negData.currencySymbol || negData.currency || 'Rs.'}${amount.toLocaleString()}.`,
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            auctionId: negData.auctionId,
-            userId: recipientId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-        }
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `arena_negotiations/${resolvedNegId}/counter`);
@@ -1301,22 +1242,6 @@ export const NegotiationService = {
           // 3. Permanently delete the negotiation document itself
           transaction.delete(negRef);
 
-          // 4. Notify the counterparty for non-private / standard negotiations
-          // (Private Negotiations with anon_seller_* are handled authoritatively by the Cloud Function trigger)
-          const recipientId = userId === negData.buyerId ? negData.sellerId : negData.buyerId;
-          if (recipientId && recipientId !== userId && !recipientId.startsWith('anon_seller_')) {
-            const notifRef = doc(collection(db, 'users', recipientId, 'notifications'));
-            transaction.set(notifRef, {
-              type: 'offer_withdrawn',
-              title: 'Submitted Offer Withdrawn',
-              message: `A submitted offer has been withdrawn and permanently removed from the system.`,
-              auctionId: negData.auctionId,
-              userId: recipientId,
-              isRead: false,
-              timestamp: serverTimestamp()
-            });
-          }
-
           return;
         }
 
@@ -1404,22 +1329,6 @@ export const NegotiationService = {
           currency: negData.currency || 'USD',
           currencySymbol: negData.currencySymbol || '$'
         });
-
-        // Notify other party (Seller->buyer delivers to buyer UID; Private buyer->seller is handled by trusted Cloud Function trigger)
-        const recipientId = userId === negData.buyerId ? negData.sellerId : negData.buyerId;
-        if (recipientId && !recipientId.startsWith('anon_seller_')) {
-          const notifRef = doc(collection(db, 'users', recipientId, 'notifications'));
-          transaction.set(notifRef, {
-            type: 'offer_accepted',
-            title: `Proposal ${action.charAt(0).toUpperCase() + action.slice(1)}ed`,
-            message: `The tactical proposal has been ${action}ed.`,
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            auctionId: negData.auctionId,
-            userId: recipientId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-        }
       });
 
       // Post-transaction cleanup for withdrawal
@@ -1474,9 +1383,6 @@ export const NegotiationService = {
         if (!negSnap.exists()) throw new Error('Negotiation not found');
         const negData = negSnap.data() as Negotiation;
         
-        const sellerContactEmail = (negData as any).sharedContactDetails?.email || 'N/A';
-        const sellerContactPhone = (negData as any).sharedContactDetails?.phone || 'N/A';
-
         const currentStatusStr = (negData.status || '').toLowerCase();
         if (currentStatusStr !== 'accepted' && currentStatusStr !== 'completed' && currentStatusStr !== 'concluded') {
           throw new Error('Deal must be accepted before completion');
@@ -1503,33 +1409,6 @@ export const NegotiationService = {
           status: 'sold',
           updatedAt: serverTimestamp()
         });
-
-        // Notify both parties
-        const buyerNotifRef = doc(collection(db, 'users', negData.buyerId, 'notifications'));
-        transaction.set(buyerNotifRef, {
-          type: 'auction_won',
-          title: 'Deal Complete: Contact Details',
-          message: `Deal completed! You can contact the seller via Email: ${sellerContactEmail}, Phone: ${sellerContactPhone}`,
-          link: `/negotiations/timeline/${resolvedNegId}`,
-          auctionId: negData.auctionId,
-          userId: negData.buyerId,
-          isRead: false,
-          timestamp: serverTimestamp()
-        });
-
-        if (negData.sellerId && !negData.sellerId.startsWith('anon_seller_')) {
-          const sellerNotifRef = doc(collection(db, 'users', negData.sellerId, 'notifications'));
-          transaction.set(sellerNotifRef, {
-            type: 'auction_won',
-            title: 'Deal Complete: Contact Details',
-            message: `Deal completed! You can contact the buyer via their profile details.`,
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            auctionId: negData.auctionId,
-            userId: negData.sellerId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-        }
 
         const offerRef = doc(collection(db, 'arena_negotiations', resolvedNegId, 'offers'));
         transaction.set(offerRef, {
@@ -1578,31 +1457,6 @@ export const NegotiationService = {
           timestamp: serverTimestamp(),
           action: 'request_contact'
         });
-
-        if (negData.sellerId && !negData.sellerId.startsWith('anon_seller_')) {
-          const notifRef = doc(collection(db, 'users', negData.sellerId, 'notifications'));
-          transaction.set(notifRef, {
-            type: 'contact_requested',
-            title: 'Contact Information Requested',
-            message: 'The buyer has requested your contact details to complete the transaction.',
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            auctionId: negData.auctionId,
-            userId: negData.sellerId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-
-          const globalNotifRef = doc(collection(db, 'notifications'));
-          transaction.set(globalNotifRef, {
-            userId: negData.sellerId,
-            type: 'contact_requested',
-            title: 'Contact Information Requested',
-            message: 'The buyer has requested your contact details to complete the transaction.',
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            read: false,
-            timestamp: serverTimestamp()
-          });
-        }
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `arena_negotiations/${negId}/requestContactInfo`);
@@ -1699,29 +1553,6 @@ export const NegotiationService = {
           timestamp: serverTimestamp(),
           action: 'share_contact'
         });
-
-        const notifRef = doc(collection(db, 'users', negData.buyerId, 'notifications'));
-        transaction.set(notifRef, {
-          type: 'contact_shared',
-          title: 'Contact Information Shared',
-          message: 'The seller has shared their contact details with you.',
-          link: `/negotiations/timeline/${resolvedNegId}`,
-          auctionId: negData.auctionId,
-          userId: negData.buyerId,
-          isRead: false,
-          timestamp: serverTimestamp()
-        });
-
-        const globalNotifRef = doc(collection(db, 'notifications'));
-        transaction.set(globalNotifRef, {
-          userId: negData.buyerId,
-          type: 'contact_shared',
-          title: 'Contact Information Shared',
-          message: 'The seller has shared their contact details with you.',
-          link: `/negotiations/timeline/${resolvedNegId}`,
-          read: false,
-          timestamp: serverTimestamp()
-        });
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `arena_negotiations/${negId}/shareContactInfo`);
@@ -1775,22 +1606,6 @@ export const NegotiationService = {
           timestamp: serverTimestamp(),
           action: 'message'
         });
-        
-        // Notify other party (Seller->buyer delivers to buyer UID; Private buyer->seller is handled by trusted Cloud Function trigger)
-        const recipientId = userId === negData.buyerId ? negData.sellerId : negData.buyerId;
-        if (recipientId && !recipientId.startsWith('anon_seller_')) {
-          const notifRef = doc(collection(db, 'users', recipientId, 'notifications'));
-          transaction.set(notifRef, {
-            type: 'private_message',
-            title: 'New Tactical Message',
-            message: `You have received a new message in your private negotiation.`,
-            link: `/negotiations/timeline/${resolvedNegId}`,
-            auctionId: negData.auctionId,
-            userId: recipientId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-        }
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `arena_negotiations/${negId}/message`);

@@ -351,25 +351,6 @@ export const ArenaService = {
             updateAuctionData.reserveMet = true;
           }
 
-          // Notification: Outbid previous bidder
-          if (auctionData.highestBidderId && auctionData.highestBidderId !== bid.userId) {
-            const notificationPayload = {
-              type: 'outbid' as const,
-              title: 'Tactical Outbid',
-              message: `You have been outbid on ${auctionData.title}. New bid: ${itemCurrencySymbol} ${bid.amount.toLocaleString()}`,
-              link: `/battle-bids?id=${bid.auctionId}`,
-              auctionId: bid.auctionId
-            };
-            
-            const prevBidderNotifRef = doc(collection(db, 'users', auctionData.highestBidderId, 'notifications'));
-            transaction.set(prevBidderNotifRef, {
-              ...notificationPayload,
-              userId: auctionData.highestBidderId,
-              isRead: false,
-              timestamp: serverTimestamp()
-            });
-          }
-
           if (isDemo) {
             // Execute Demo Credit deduction in client demo storage
             DemoCreditsService.deductDemoCreditForBid(
@@ -423,7 +404,7 @@ export const ArenaService = {
   },
 
   /**
-   * Completes an auction, evaluating reserve prices, generating order and notifications atomically.
+   * Completes an auction, evaluating reserve prices, generating order atomically.
    */
   async completeAuction(auctionId: string): Promise<void> {
     try {
@@ -488,52 +469,11 @@ export const ArenaService = {
             soldAt: serverTimestamp(),
             updatedAt: serverTimestamp()
           });
-
-          // 3. Winner Notification
-          const winnerNotifRef = doc(collection(db, 'users', auctionData.highestBidderId, 'notifications'));
-          transaction.set(winnerNotifRef, {
-            type: 'auction_won',
-            title: 'Auction Won — Payment Required',
-            message: `You won this Battle Bids auction. Please complete payment within ${BATTLE_BIDS_PAYMENT_DEADLINE_HOURS} hours.`,
-            link: `/orders/${orderId}`,
-            orderId: orderId,
-            auctionId: auctionId,
-            userId: auctionData.highestBidderId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
-
-          // 4. Seller Notification
-          const sellerNotifRef = doc(collection(db, 'users', auctionData.sellerId, 'notifications'));
-          transaction.set(sellerNotifRef, {
-            type: 'auction_won',
-            title: 'Auction Sold — Payment Pending',
-            message: 'Your Battle Bids auction has been sold. The winning buyer must complete payment before fulfillment.',
-            link: `/seller-dashboard`,
-            orderId: orderId,
-            auctionId: auctionId,
-            userId: auctionData.sellerId,
-            isRead: false,
-            timestamp: serverTimestamp()
-          });
         } else {
           // Unsold or reserve not met
           transaction.update(auctionRef, {
             status: finalStatus,
             updatedAt: serverTimestamp()
-          });
-
-          // Seller Notification for unsold
-          const sellerNotifRef = doc(collection(db, 'users', auctionData.sellerId, 'notifications'));
-          transaction.set(sellerNotifRef, {
-            type: 'auction_lost',
-            title: 'Auction Expired',
-            message: `Your auction for ${auctionData.title} ended without a sale.`,
-            link: `/battle-bids?id=${auctionId}`,
-            auctionId: auctionId,
-            userId: auctionData.sellerId,
-            isRead: false,
-            timestamp: serverTimestamp()
           });
         }
       });

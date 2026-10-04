@@ -493,14 +493,9 @@ service cloud.firestore {
       match /notifications/{notificationId} {
         allow read: if isSignedIn() && (userId == request.auth.uid || isAdmin());
         allow create: if isAdmin() || (
-          isSignedIn() && isNotBlocked() && (
-            userId == request.auth.uid ||
-            (
-              incoming().get('type', '') == 'outbid' &&
-              incoming().get('link', '').matches('^/battle-bids\\?id=.*')
-            )
-          ) &&
-          !incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE']
+          isSignedIn() && isNotBlocked() &&
+          userId == request.auth.uid &&
+          !(incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE'])
         );
         allow update: if isSignedIn() && (userId == request.auth.uid || isAdmin())
                       && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read']);
@@ -668,12 +663,79 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /offers/{offerId} {
+      allow create: if isNotBlocked() && (
+        isAdmin() ||
+        (
+          isSignedIn() &&
+          incoming().get('buyerId', '') == request.auth.uid &&
+          incoming().get('listingId', '') is string &&
+          incoming().get('listingId', '').size() > 0 &&
+          incoming().get('status', '') == 'pending' &&
+          incoming().get('proposedPrice', 0) is number &&
+          incoming().get('proposedPrice', 0) > 0 &&
+          incoming().get('createdAt', null) == request.time &&
+          exists(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))) &&
+          get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('status', '') == 'LIVE' &&
+          incoming().get('sellerId', '') == get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('ownerId', '') &&
+          incoming().get('buyerId', '') != incoming().get('sellerId', '')
+        )
+      );
+    }
+
     match /notifications/{notificationId} {
       allow read: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
       allow create: if isAdmin() || (
         isSignedIn() && isNotBlocked() &&
-        incoming().get('userId', '') == request.auth.uid &&
-        !incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE']
+        !(incoming().get('type', '') in [
+          'CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED',
+          'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT',
+          'ADMIN_NOTICE', 'PRICE_DROP', 'OFFER_RECEIVED'
+        ]) && (
+          // Branch A: SELF notifications
+          (
+            incoming().get('userId', '') == request.auth.uid &&
+            incoming().get('type', '') in [
+              'SYSTEM', 'BATTLE_BIDS_PAYMENT_REVIEW', 'PAYMENT_CONFIRMED',
+              'KYC_SUBMITTED', 'KYC_APPEAL_SUBMITTED'
+            ]
+          ) ||
+          // Branch B: Buyer -> Seller (Order event notification)
+          (
+            incoming().get('type', '') in ['NEW_ORDER', 'BATTLE_BIDS_PAYMENT_SUBMITTED'] &&
+            incoming().get('relatedId', '') != '' &&
+            exists(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))) &&
+            get(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))).data.get('buyerId', '') == request.auth.uid &&
+            get(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))).data.get('sellerId', '') == incoming().get('userId', '')
+          ) ||
+          // Branch C: Seller -> Buyer (Order event notification)
+          (
+            incoming().get('type', '') in [
+              'ORDER_ACCEPTED', 'ORDER_REJECTED', 'ORDER_UPDATED',
+              'ORDER_SOLD', 'BATTLE_BIDS_PAYMENT_VERIFIED', 'BATTLE_BIDS_SHIPPED'
+            ] &&
+            incoming().get('relatedId', '') != '' &&
+            exists(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))) &&
+            get(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))).data.get('sellerId', '') == request.auth.uid &&
+            get(/databases/$(database)/documents/orders/$(incoming().get('relatedId', ''))).data.get('buyerId', '') == incoming().get('userId', '')
+          ) ||
+          // Branch D: Chat participant -> Other participant
+          (
+            incoming().get('type', '') == 'message' &&
+            incoming().get('relatedId', '') != '' &&
+            exists(/databases/$(database)/documents/chats/$(incoming().get('relatedId', ''))) &&
+            (
+              (
+                get(/databases/$(database)/documents/chats/$(incoming().get('relatedId', ''))).data.get('buyerId', '') == request.auth.uid &&
+                get(/databases/$(database)/documents/chats/$(incoming().get('relatedId', ''))).data.get('sellerId', '') == incoming().get('userId', '')
+              ) ||
+              (
+                get(/databases/$(database)/documents/chats/$(incoming().get('relatedId', ''))).data.get('sellerId', '') == request.auth.uid &&
+                get(/databases/$(database)/documents/chats/$(incoming().get('relatedId', ''))).data.get('buyerId', '') == incoming().get('userId', '')
+              )
+            )
+          )
+        )
       ); 
       allow update: if isSignedIn() && (existing().get('userId', '') == request.auth.uid || isAdmin())
                     && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'isRead']);

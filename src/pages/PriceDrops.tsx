@@ -481,15 +481,6 @@ export function PriceDrops() {
         updatedAt: serverTimestamp(),
       });
 
-      // Send Firestore system notification to owner
-      await sendNotification(
-        selectedOfferItem.ownerId,
-        "📉 New Price Offer Received!",
-        `Someone made an offer of ${formatPKR(Number(offerPrice))} on your dropped item: ${selectedOfferItem.title}.`,
-        "OFFER_RECEIVED",
-        selectedOfferItem.id
-      ).catch(() => {});
-
       setOfferSuccess(true);
       setTimeout(() => {
         setSelectedOfferItem(null);

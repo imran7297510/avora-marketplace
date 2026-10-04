@@ -931,6 +931,7 @@ export function Profile() {
       await setDoc(notifRef, {
         id: notifRef.id,
         userId: user.uid,
+        type: "KYC_SUBMITTED",
         title: "KYC Application Submitted",
         message: `Your KYC Verification is successfully filed as ${kycCategory === "FIRM_COMPANY" ? "Firm / Company" : kycCategory === "OWN_BUSINESS" ? "Own Business" : "Individual"}. Status: Pending Review.`,
         read: false,
@@ -1009,17 +1010,24 @@ export function Profile() {
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
-      const notifRef = doc(collection(db, "notifications"));
-      batch.set(notifRef, {
-        id: notifRef.id,
-        userId: user.uid,
-        title: "Appeal Submitted",
-        message: "Your appeal for KYC verification restoration has been received and is under review.",
-        read: false,
-        createdAt: serverTimestamp(),
-      });
-
       await batch.commit();
+
+      // Secondary notification dispatch: Decoupled from core KYC batch
+      try {
+        const notifRef = doc(collection(db, "notifications"));
+        await setDoc(notifRef, {
+          id: notifRef.id,
+          userId: user.uid,
+          type: "KYC_APPEAL_SUBMITTED",
+          relatedId: targetAppDocId,
+          title: "Appeal Submitted",
+          message: "Your appeal for KYC verification restoration has been received and is under review.",
+          read: false,
+          createdAt: serverTimestamp(),
+        });
+      } catch (notifErr) {
+        console.warn("[Profile.handleRequestResume] Failed to dispatch appeal notification:", notifErr);
+      }
 
       if (kycApp) {
         setKycApp({

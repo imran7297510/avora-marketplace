@@ -19,7 +19,6 @@ import {
   deleteDoc,
   runTransaction,
   limit,
-  collectionGroup,
   Timestamp,
 } from "firebase/firestore";
 import {
@@ -747,7 +746,6 @@ export function ListingDetails() {
     setIsSubmittingReport(true);
     try {
       const reportRef = doc(collection(db, "reports"));
-      const metricsRef = doc(db, "system_metrics", "moderation");
 
       await runTransaction(db, async (transaction) => {
         transaction.set(reportRef, {
@@ -761,17 +759,6 @@ export function ListingDetails() {
           status: "OPEN",
           createdAt: serverTimestamp(),
         });
-
-        transaction.set(
-          metricsRef,
-          {
-            allReportsCount: increment(1),
-            availableReportsCount: increment(1),
-            pendingReportsCount: increment(1),
-            lastUpdated: serverTimestamp(),
-          },
-          { merge: true }
-        );
       });
 
       moderationMetricsService.clearCache();
@@ -1119,29 +1106,6 @@ export function ListingDetails() {
           priceDroppedAmount: isDrop ? amount : undefined,
         } as Listing;
       });
-
-      // Send smart notification system alerts to watchlist/favorites matches
-      if (isDrop) {
-        try {
-          const favoritesSnap = await getDocs(
-            query(collectionGroup(db, "favorites"), where("listingId", "==", listing.id))
-          );
-          favoritesSnap.forEach(async (favDoc) => {
-            const watcherUid = favDoc.ref.parent?.parent?.id;
-            if (watcherUid && watcherUid !== user.uid) {
-              await sendNotification(
-                watcherUid,
-                "🔔 Item in Watchlist Dropped Price!",
-                `${listing.title} is now available at a massive discount! Saved ${formatPKR(amount, listing.currencySymbol || listing.currency)} (${percent}% Off).`,
-                "PRICE_DROP",
-                listing.id
-              ).catch(() => {});
-            }
-          });
-        } catch (err) {
-          console.warn("Could not notify watchers automatically:", err);
-        }
-      }
 
       setToastMessage(isDrop ? "📉 Price dropped & watchers notified successfully!" : "💰 Price updated successfully (Not a generic Drop)!");
       setTimeout(() => setToastMessage(null), 4000);
