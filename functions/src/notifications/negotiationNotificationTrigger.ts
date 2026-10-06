@@ -6,7 +6,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Resolves the authoritative real seller Firebase Auth UID from the private subcollection.
@@ -117,7 +117,10 @@ async function deliverSellerNotification(
  * and private proposal events for private negotiations.
  */
 export const onNegotiationOfferCreatedTrigger = onDocumentCreated(
-  'arena_negotiations/{negId}/offers/{offerId}',
+  {
+    document: 'arena_negotiations/{negId}/offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const offerData = event.data?.data();
     if (!offerData) return;
@@ -271,7 +274,10 @@ export const onNegotiationOfferCreatedTrigger = onDocumentCreated(
  * Maintained for schema compatibility. Does not emit status-change notifications without actor verification.
  */
 export const onNegotiationUpdatedTrigger = onDocumentUpdated(
-  'arena_negotiations/{negId}',
+  {
+    document: 'arena_negotiations/{negId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (_event) => {
     // Intentionally no-op for actor-sensitive transitions (accept/decline/complete/contactRequest),
     // which are authoritatively and actor-safely handled by onNegotiationOfferCreatedTrigger.

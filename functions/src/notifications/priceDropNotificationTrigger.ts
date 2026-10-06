@@ -6,7 +6,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Deterministically parses a Firestore/JavaScript timestamp value into milliseconds.
@@ -50,7 +50,10 @@ function extractTimestampMs(val: any): number | null {
  * using deterministic IDs to both root /notifications and /users/{watcherUid}/notifications.
  */
 export const onListingPriceDropTrigger = onDocumentUpdated(
-  'listings/{listingId}',
+  {
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();

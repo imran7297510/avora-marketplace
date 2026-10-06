@@ -7,14 +7,17 @@ const firestore_2 = require("firebase-admin/firestore");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /offers/{offerId} creation.
  * Validates the event against authoritative /listings/{listingId} data, ensures seller
  * identity consistency, suppresses self-offers, and idempotently dispatches OFFER_RECEIVED
  * notifications to both root /notifications and /users/{sellerUid}/notifications.
  */
-exports.onOfferCreatedTrigger = (0, firestore_1.onDocumentCreated)('offers/{offerId}', async (event) => {
+exports.onOfferCreatedTrigger = (0, firestore_1.onDocumentCreated)({
+    document: 'offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const offerData = event.data?.data();
     if (!offerData) {
         console.warn('[OFFER_TRIGGER] Missing offer snapshot or data for event');

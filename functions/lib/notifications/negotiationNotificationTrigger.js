@@ -7,7 +7,7 @@ const firestore_2 = require("firebase-admin/firestore");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Resolves the authoritative real seller Firebase Auth UID from the private subcollection.
  * Returns null if the listing is not private, missing, malformed, or a simulated account.
@@ -92,7 +92,10 @@ async function deliverSellerNotification(recipientUid, notifId, payload) {
  * Handles contact requests and contact sharing for both public and private negotiations,
  * and private proposal events for private negotiations.
  */
-exports.onNegotiationOfferCreatedTrigger = (0, firestore_1.onDocumentCreated)('arena_negotiations/{negId}/offers/{offerId}', async (event) => {
+exports.onNegotiationOfferCreatedTrigger = (0, firestore_1.onDocumentCreated)({
+    document: 'arena_negotiations/{negId}/offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const offerData = event.data?.data();
     if (!offerData)
         return;
@@ -237,7 +240,10 @@ exports.onNegotiationOfferCreatedTrigger = (0, firestore_1.onDocumentCreated)('a
  * Trigger B: Fires when a negotiation document in arena_negotiations/{negId} is updated.
  * Maintained for schema compatibility. Does not emit status-change notifications without actor verification.
  */
-exports.onNegotiationUpdatedTrigger = (0, firestore_1.onDocumentUpdated)('arena_negotiations/{negId}', async (_event) => {
+exports.onNegotiationUpdatedTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'arena_negotiations/{negId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (_event) => {
     // Intentionally no-op for actor-sensitive transitions (accept/decline/complete/contactRequest),
     // which are authoritatively and actor-safely handled by onNegotiationOfferCreatedTrigger.
 });

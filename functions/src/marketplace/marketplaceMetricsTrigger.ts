@@ -6,7 +6,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 const METRICS_DOC_PATH = 'system_metrics';
 const METRICS_DOC_ID = 'marketplace';
@@ -66,7 +66,10 @@ const getQualifyingCity = (data: any): string | null => {
  * with exact-once event idempotency protection against duplicate or retried deliveries.
  */
 export const onListingWrittenMetricsTrigger = onDocumentWritten(
-  'listings/{listingId}',
+  {
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const eventId = event.id;
     if (!eventId) {

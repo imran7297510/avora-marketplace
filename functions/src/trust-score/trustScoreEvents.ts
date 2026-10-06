@@ -9,13 +9,18 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Automated Firestore Trigger: Fires when an Order document is updated.
  * Triggers Trust Score completion (+2 for buyer, +3 for seller) when order status transitions to 'SOLD', 'DEAL_DONE', or 'PAID'.
  */
-export const onOrderUpdatedTrigger = onDocumentUpdated('orders/{orderId}', async (event) => {
+export const onOrderUpdatedTrigger = onDocumentUpdated(
+  {
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
+  async (event) => {
   const beforeData = event.data?.before.data();
   const afterData = event.data?.after.data();
 
@@ -53,7 +58,12 @@ export const onOrderUpdatedTrigger = onDocumentUpdated('orders/{orderId}', async
 /**
  * Automated Firestore Trigger: Fires when a Listing document status transitions to 'SOLD'.
  */
-export const onListingSoldTrigger = onDocumentUpdated('listings/{listingId}', async (event) => {
+export const onListingSoldTrigger = onDocumentUpdated(
+  {
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
+  async (event) => {
   const beforeData = event.data?.before.data();
   const afterData = event.data?.after.data();
 

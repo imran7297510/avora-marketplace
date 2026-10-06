@@ -11,6 +11,7 @@ import {
   addDoc,
   deleteDoc,
   updateDoc,
+  runTransaction,
   serverTimestamp,
   increment,
   orderBy,
@@ -493,44 +494,96 @@ export function PriceDrops() {
     }
   };
 
-  // Direct checkout Buy Now Submit
+  // Direct checkout Buy Now Submit (Atomic reservation & purchase)
   const handleDirectBuySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !selectedBuyItem) return;
 
+    if (!deliveryAddress || !contactPhone) {
+      alert("Please provide both delivery address and contact phone number.");
+      return;
+    }
+
     setBuyingProcess(true);
     try {
-      const orderRef = await addDoc(collection(db, "orders"), {
-        listingId: selectedBuyItem.id,
-        listingTitle: selectedBuyItem.title,
-        listingImage: selectedBuyItem.images?.[0] || null,
-        buyerId: user.uid,
-        buyerName: userProfile?.name || user.email || "Direct Buyer",
-        sellerId: selectedBuyItem.ownerId,
-        unitPrice: selectedBuyItem.price,
-        quantity: 1,
-        shippingCharges: 0,
-        totalAmount: selectedBuyItem.price,
-        currency: selectedBuyItem.currency || 'PKR',
-        currencySymbol: selectedBuyItem.currencySymbol || getCurrencyByCode(selectedBuyItem.currency || 'PKR').symbol,
-        buyerAddress: deliveryAddress,
-        buyerContact: contactPhone,
-        status: "PENDING",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const listingRef = doc(db, "listings", selectedBuyItem.id);
+      const orderRef = doc(collection(db, "orders"));
+      let finalSellerId = selectedBuyItem.ownerId;
+      let finalTitle = selectedBuyItem.title;
+      let finalPrice = selectedBuyItem.price;
+
+      await runTransaction(db, async (transaction) => {
+        const listingDoc = await transaction.get(listingRef);
+        if (!listingDoc.exists()) {
+          throw new Error("ITEM_NOT_FOUND: This listing no longer exists.");
+        }
+
+        const listingData = listingDoc.data();
+        if (
+          listingData.status === "SOLD" ||
+          listingData.status === "BOOKED" ||
+          listingData.status === "SUSPENDED" ||
+          listingData.status === "REJECTED"
+        ) {
+          throw new Error("ITEM_UNAVAILABLE: This item is no longer available for purchase.");
+        }
+
+        const currentQuantity = typeof listingData.quantity === 'number' ? listingData.quantity : 1;
+        if (currentQuantity < 1) {
+          throw new Error("OUT_OF_STOCK: This item is out of stock.");
+        }
+
+        finalSellerId = listingData.ownerId;
+        finalTitle = listingData.title || selectedBuyItem.title;
+        finalPrice = typeof listingData.price === 'number' ? listingData.price : selectedBuyItem.price;
+
+        if (finalSellerId === user.uid) {
+          throw new Error("SELLER_CANNOT_BUY: You cannot purchase your own listed item.");
+        }
+
+        const newStock = currentQuantity - 1;
+
+        // 1. Create standard marketplace order
+        transaction.set(orderRef, {
+          listingId: selectedBuyItem.id,
+          listingTitle: finalTitle,
+          listingImage: listingData.images?.[0] || selectedBuyItem.images?.[0] || null,
+          buyerId: user.uid,
+          buyerName: userProfile?.name || user.email || "Direct Buyer",
+          sellerId: finalSellerId,
+          unitPrice: finalPrice,
+          quantity: 1,
+          shippingCharges: Number(listingData.shippingCharges) || 0,
+          totalAmount: finalPrice + (Number(listingData.shippingCharges) || 0),
+          currency: listingData.currency || selectedBuyItem.currency || 'PKR',
+          currencySymbol: listingData.currencySymbol || selectedBuyItem.currencySymbol || getCurrencyByCode(listingData.currency || 'PKR').symbol,
+          buyerAddress: deliveryAddress,
+          buyerContact: contactPhone,
+          status: "PENDING",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        });
+
+        // 2. Atomically reserve inventory and transition status
+        const listingUpdatePayload: any = {
+          quantity: newStock,
+          updatedAt: serverTimestamp(),
+        };
+
+        if (newStock === 0) {
+          listingUpdatePayload.status = "SOLD";
+          listingUpdatePayload.bookedAt = serverTimestamp();
+        }
+
+        transaction.update(listingRef, listingUpdatePayload);
       });
 
-      // Update listing status & add order activity
-      await updateDoc(doc(db, "listings", selectedBuyItem.id), {
-        status: "SOLD",
-        updatedAt: serverTimestamp(),
-      });
-
-      // Send Order Request notification to seller
+      // Send Order Request notification to seller ONLY upon transaction success
       await sendNotification(
-        selectedBuyItem.ownerId,
+        finalSellerId,
         "🛒 Direct Purchase Deal Cleared!",
-        `Great news! A buyer has bought your price drop item: ${selectedBuyItem.title} for ${formatPKR(selectedBuyItem.price)}.`,
+        `Great news! A buyer has bought your price drop item: ${finalTitle} for ${formatPKR(finalPrice)}.`,
         "NEW_ORDER",
         orderRef.id
       ).catch(() => {});
@@ -545,9 +598,23 @@ export function PriceDrops() {
         // Remove from deals
         setListings((prev) => prev.filter((it) => it.id !== selectedBuyItem.id));
       }, 4000);
-    } catch (err) {
+    } catch (err: any) {
       setBuyingProcess(false);
-      alert("Database error executing quick purchase order. Ref try again.");
+      const errorMessage = err?.message || "";
+      if (
+        errorMessage.includes("ITEM_UNAVAILABLE") ||
+        errorMessage.includes("OUT_OF_STOCK") ||
+        errorMessage.includes("ITEM_NOT_FOUND")
+      ) {
+        alert("This item has just been purchased by another buyer or is no longer available.");
+        // Refresh local listing view
+        setListings((prev) => prev.filter((it) => it.id !== selectedBuyItem.id));
+        setSelectedBuyItem(null);
+      } else if (errorMessage.includes("SELLER_CANNOT_BUY")) {
+        alert("You cannot purchase your own listed item.");
+      } else {
+        alert("Failed to complete purchase order. Please try again.");
+      }
     }
   };
 

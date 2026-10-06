@@ -154,8 +154,31 @@ service cloud.firestore {
 
     match /supportTickets/{ticketId} {
       allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn();
-      allow update: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow create: if isNotBlocked() && (
+        isAdmin() || (
+          isSignedIn() &&
+          incoming().userId == request.auth.uid &&
+          incoming().status == 'PENDING' &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          !('adminReply' in incoming()) &&
+          !('repliedBy' in incoming()) &&
+          !('repliedAt' in incoming()) &&
+          !('resolvedAt' in incoming()) &&
+          !('assignedTo' in incoming())
+        )
+      );
+      allow update: if isAdmin() && (
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'adminReply', 'repliedBy', 'repliedAt', 'resolvedAt', 'updatedAt'
+        ]) &&
+        incoming().status in ['PENDING', 'IN_PROGRESS', 'RESOLVED'] &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['resolvedAt']) || incoming().resolvedAt == request.time) &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['repliedAt']) || incoming().repliedAt == request.time) &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['updatedAt']) || incoming().updatedAt == request.time)
+      );
       allow delete: if isAdmin();
     }
 
@@ -408,6 +431,10 @@ service cloud.firestore {
                     && (!('creditsBalance' in incoming()) || incoming().creditsBalance == 0)
                     && (!('totalCreditsPurchased' in incoming()) || incoming().totalCreditsPurchased == 0)
                     && (!('totalCreditsSpent' in incoming()) || incoming().totalCreditsSpent == 0)
+                    && !('isAdmin' in incoming())
+                    && !('isSuperAdmin' in incoming())
+                    && !('isAuthorizedAdmin' in incoming())
+                    && !('isPaymentVerifier' in incoming())
                     && !('kycStatus' in incoming())
                     && !('isKycVerified' in incoming())
                     && !('isVerified' in incoming())
@@ -515,7 +542,17 @@ service cloud.firestore {
         // Standard non-Battle-Bids marketplace orders
         (
           incoming().get('source', '') != 'battle_bids' &&
-          (incoming().get('buyerId', '') == request.auth.uid || incoming().get('sellerId', '') == request.auth.uid)
+          incoming().get('buyerId', '') == request.auth.uid &&
+          incoming().get('sellerId', '') is string &&
+          incoming().get('sellerId', '') != '' &&
+          incoming().get('sellerId', '') != request.auth.uid &&
+          incoming().get('listingId', '') is string &&
+          incoming().get('listingId', '') != '' &&
+          incoming().get('status', '') == 'PENDING' &&
+          exists(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))) &&
+          incoming().get('sellerId', '') == get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('ownerId', '') &&
+          incoming().get('createdAt', null) == request.time &&
+          (!('expiresAt' in incoming()) || incoming().expiresAt == null || incoming().expiresAt >= request.time + duration.value(24, 'h') - duration.value(5, 'm'))
         ) ||
         // Primary Battle Bids winning order (BB-${auctionId})
         (
@@ -554,48 +591,112 @@ service cloud.firestore {
                       incoming().get('createdAt', null) == existing().get('createdAt', null) &&
                       incoming().get('paymentDeadline', null) == existing().get('paymentDeadline', null) &&
 
-                      // 2. Battle Bids authoritative role-based status transition & deadline matrix
+                      // 2. Role-based status transition & field authorization matrix
                       (
-                        existing().get('source', '') != 'battle_bids' ||
+                        // A. BATTLE BIDS ORDERS (source == 'battle_bids')
                         (
-                          // BUYER TRANSITION RULES
+                          existing().get('source', '') == 'battle_bids' &&
                           (
-                            request.auth.uid == existing().get('buyerId', '') &&
-                            // Must not be expired when submitting
-                            (existing().get('paymentDeadline', null) == null || request.time < existing().paymentDeadline) &&
-                            // Existing state must be AWAITING_PAYMENT or PAYMENT_REVIEW
-                            existing().get('status', '') in ['AWAITING_PAYMENT', 'PAYMENT_REVIEW'] &&
-                            // New state can ONLY be PAYMENT_REVIEW (or remain unchanged)
-                            incoming().get('status', '') in [existing().get('status', ''), 'PAYMENT_REVIEW'] &&
-                            // Buyer cannot touch seller fulfillment / verification stamps
-                            !incoming().diff(existing()).affectedKeys().hasAny(['courierName', 'trackingNumber', 'paymentVerifiedAt', 'shippedAt'])
-                          )
-                          ||
-                          // SELLER TRANSITION RULES
-                          (
-                            request.auth.uid == existing().get('sellerId', '') &&
+                            // BUYER TRANSITION RULES
                             (
-                              // Review -> Paid
-                              (incoming().get('status', '') == 'PAID' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT', 'PAID']) ||
-                              // Paid -> Shipped
-                              (incoming().get('status', '') == 'SHIPPED' && existing().get('status', '') in ['PAID', 'SHIPPED']) ||
-                              // Shipped -> Deal Done / Completed
-                              (incoming().get('status', '') in ['DEAL_DONE', 'COMPLETED'] && existing().get('status', '') in ['SHIPPED', 'DEAL_DONE', 'COMPLETED']) ||
-                              // Rejection: Review -> Awaiting Payment
-                              (incoming().get('status', '') == 'AWAITING_PAYMENT' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT']) ||
-                              // Expiration Trigger by Seller when deadline has passed
-                              (incoming().get('status', '') == 'PAYMENT_EXPIRED' && existing().get('status', '') == 'AWAITING_PAYMENT' && existing().get('paymentDeadline', null) != null && request.time >= existing().paymentDeadline) ||
-                              // Same status update (e.g. updating notes or address verification)
-                              (incoming().get('status', '') == existing().get('status', ''))
+                              request.auth.uid == existing().get('buyerId', '') &&
+                              // Must not be expired when submitting
+                              (existing().get('paymentDeadline', null) == null || request.time < existing().paymentDeadline) &&
+                              // Existing state must be AWAITING_PAYMENT or PAYMENT_REVIEW
+                              existing().get('status', '') in ['AWAITING_PAYMENT', 'PAYMENT_REVIEW'] &&
+                              // New state can ONLY be PAYMENT_REVIEW (or remain unchanged)
+                              incoming().get('status', '') in [existing().get('status', ''), 'PAYMENT_REVIEW'] &&
+                              // Buyer cannot touch seller fulfillment / verification stamps
+                              !incoming().diff(existing()).affectedKeys().hasAny(['courierName', 'trackingNumber', 'paymentVerifiedAt', 'shippedAt'])
+                            )
+                            ||
+                            // SELLER TRANSITION RULES
+                            (
+                              request.auth.uid == existing().get('sellerId', '') &&
+                              (
+                                // Review -> Paid
+                                (incoming().get('status', '') == 'PAID' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT', 'PAID']) ||
+                                // Paid -> Shipped
+                                (incoming().get('status', '') == 'SHIPPED' && existing().get('status', '') in ['PAID', 'SHIPPED']) ||
+                                // Shipped -> Deal Done / Completed
+                                (incoming().get('status', '') in ['DEAL_DONE', 'COMPLETED'] && existing().get('status', '') in ['SHIPPED', 'DEAL_DONE', 'COMPLETED']) ||
+                                // Rejection: Review -> Awaiting Payment
+                                (incoming().get('status', '') == 'AWAITING_PAYMENT' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT']) ||
+                                // Expiration Trigger by Seller when deadline has passed
+                                (incoming().get('status', '') == 'PAYMENT_EXPIRED' && existing().get('status', '') == 'AWAITING_PAYMENT' && existing().get('paymentDeadline', null) != null && request.time >= existing().paymentDeadline) ||
+                                // Same status update (e.g. updating notes or address verification)
+                                (incoming().get('status', '') == existing().get('status', ''))
+                              )
+                            )
+                            ||
+                            // SYSTEM / PARTICIPANT EXPIRATION TRIGGER (When payment deadline has passed and status is AWAITING_PAYMENT)
+                            (
+                              incoming().get('status', '') == 'PAYMENT_EXPIRED' &&
+                              existing().get('status', '') == 'AWAITING_PAYMENT' &&
+                              existing().get('paymentDeadline', null) != null &&
+                              request.time >= existing().paymentDeadline
                             )
                           )
-                          ||
-                          // SYSTEM / PARTICIPANT EXPIRATION TRIGGER (When payment deadline has passed and status is AWAITING_PAYMENT)
+                        )
+                        ||
+                        // B. STANDARD MARKETPLACE ORDERS (source != 'battle_bids')
+                        (
+                          existing().get('source', '') != 'battle_bids' &&
                           (
-                            incoming().get('status', '') == 'PAYMENT_EXPIRED' &&
-                            existing().get('status', '') == 'AWAITING_PAYMENT' &&
-                            existing().get('paymentDeadline', null) != null &&
-                            request.time >= existing().paymentDeadline
+                            // BUYER UPDATE RULES (Standard Marketplace)
+                            (
+                              request.auth.uid == existing().get('buyerId', '') &&
+                              // Buyer status must remain unchanged (cannot forge seller states)
+                              incoming().get('status', '') == existing().get('status', '') &&
+                              // Buyer can only update while order is active (not terminal/rejected/expired)
+                              existing().get('status', '') in ['PENDING', 'ACCEPTED', 'BOOKED'] &&
+                              // Buyer cannot touch seller fulfillment, courier, or verification fields
+                              !incoming().diff(existing()).affectedKeys().hasAny([
+                                'courierName', 'trackingNumber', 'shippingNotes', 'shippedAt',
+                                'paymentVerifiedAt', 'paymentRejectedAt', 'paymentDenialReason'
+                              ])
+                            )
+                            ||
+                            // SELLER UPDATE RULES (Standard Marketplace)
+                            (
+                              request.auth.uid == existing().get('sellerId', '') &&
+                              (
+                                // Transition: PENDING -> ACCEPTED
+                                (incoming().get('status', '') == 'ACCEPTED' && existing().get('status', '') == 'PENDING') ||
+                                // Transition: PENDING -> REJECTED
+                                (incoming().get('status', '') == 'REJECTED' && existing().get('status', '') == 'PENDING') ||
+                                // Transition: PENDING / ACCEPTED / BOOKED -> PAID
+                                (incoming().get('status', '') == 'PAID' && existing().get('status', '') in ['PENDING', 'ACCEPTED', 'BOOKED', 'PAID']) ||
+                                // Transition: PENDING / ACCEPTED / BOOKED / PAID -> SHIPPED
+                                (incoming().get('status', '') == 'SHIPPED' && existing().get('status', '') in ['PENDING', 'ACCEPTED', 'BOOKED', 'PAID', 'SHIPPED']) ||
+                                // Transition: SHIPPED / PAID -> DEAL_DONE / COMPLETED / SOLD / READY_TO_TRANSFER
+                                (incoming().get('status', '') in ['DEAL_DONE', 'COMPLETED', 'SOLD', 'READY_TO_TRANSFER'] && existing().get('status', '') in ['SHIPPED', 'PAID', 'ACCEPTED', 'DEAL_DONE', 'COMPLETED', 'SOLD', 'READY_TO_TRANSFER']) ||
+                                // Transition: PENDING -> EXPIRED (when 24-hour expiration deadline has passed)
+                                (
+                                  incoming().get('status', '') == 'EXPIRED' &&
+                                  existing().get('status', '') == 'PENDING' &&
+                                  existing().get('createdAt', null) != null &&
+                                  request.time >= existing().createdAt + duration.value(24, 'h') &&
+                                  (existing().get('expiresAt', null) == null || request.time >= existing().expiresAt)
+                                ) ||
+                                // Same status update (e.g. updating shipping notes or tracking while staying in same state)
+                                (incoming().get('status', '') == existing().get('status', ''))
+                              ) &&
+                              // Seller cannot overwrite buyer payment proof/submission details or buyer address
+                              !incoming().diff(existing()).affectedKeys().hasAny([
+                                'paymentProofUrl', 'paymentProof', 'transactionId', 'paymentSubmittedAt',
+                                'buyerAddress', 'buyerContact', 'buyerPhone', 'buyerName', 'shippingAddress'
+                              ])
+                            )
+                            ||
+                            // SYSTEM / PARTICIPANT EXPIRATION TRIGGER (Standard Marketplace PENDING orders expired after deadline)
+                            (
+                              incoming().get('status', '') == 'EXPIRED' &&
+                              existing().get('status', '') == 'PENDING' &&
+                              existing().get('createdAt', null) != null &&
+                              request.time >= existing().createdAt + duration.value(24, 'h') &&
+                              (existing().get('expiresAt', null) == null || request.time >= existing().expiresAt)
+                            )
                           )
                         )
                       )
@@ -608,6 +709,7 @@ service cloud.firestore {
                       'paymentSubmittedAt', 'paymentVerifiedAt', 'paymentRejectedAt', 'paymentDenialReason', 'paymentMadeAt', 'shippedAt',
                       'expiredAt', 'expirationReason'
                     ]);
+      allow delete: if isAdmin();
     }
 
     match /second_chance_offers/{offerId} {
@@ -1048,6 +1150,16 @@ service cloud.firestore {
           && data.endTime is timestamp;
       }
 
+      function isAuctionSeller() {
+        return isSignedIn() && (
+          existing().sellerId == request.auth.uid || 
+          existing().get('userId', '') == request.auth.uid || 
+          existing().get('ownerId', '') == request.auth.uid ||
+          (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&
+           get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)
+        );
+      }
+
       allow read: if true;
       allow create: if isNotBlocked() && isValidAuction(incoming()) && (
         (incoming().get('isNegotiationOnly', false) == false && incoming().sellerId == request.auth.uid) ||
@@ -1057,47 +1169,198 @@ service cloud.firestore {
           getAfter(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid
         )
       );
-      allow delete: if isAdmin() || (isSignedIn() && (
-        existing().sellerId == request.auth.uid || 
-        existing().get('userId', '') == request.auth.uid || 
-        existing().get('ownerId', '') == request.auth.uid ||
-        (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&
-         get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)
-      ));
+      allow delete: if isAdmin() || (isSignedIn() && isAuctionSeller());
       allow update: if isAdmin() || (
         isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && (
-          // Action: Bid
-          (incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime', 'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts']) &&
-           incoming().diff(existing()).affectedKeys().hasOnly(['currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime', 'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts']) &&
-           incoming().currentBid > existing().currentBid &&
-           (incoming().highestBidderId == request.auth.uid || incoming().highestBidderId == 'simulator_bot_bidder') &&
-           (incoming().extensionsCount <= (existing().get('maxExtensions', 10)))
+          // Action 1: Legitimate Bid (Non-seller bidder on active, non-expired auction)
+          (
+            existing().status == 'active' &&
+            request.time < existing().endTime &&
+            !isAuctionSeller() &&
+            incoming().status == existing().status &&
+            incoming().sellerId == existing().sellerId &&
+            incoming().startingPrice == existing().startingPrice &&
+            incoming().startTime == existing().startTime &&
+            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
+            incoming().get('reservePrice', null) == existing().get('reservePrice', null) &&
+            incoming().currentBid > existing().currentBid &&
+            incoming().currentBid >= (existing().currentBid + existing().get('minIncrement', 1)) &&
+            incoming().highestBidderId == request.auth.uid &&
+            incoming().bidsCount == existing().get('bidsCount', 0) + 1 &&
+            existing().get('userBidCounts', {}).get(request.auth.uid, 0) < 10 &&
+            incoming().get('userBidCounts', {}).get(request.auth.uid, 0) == existing().get('userBidCounts', {}).get(request.auth.uid, 0) + 1 &&
+            incoming().get('userBidCounts', {}).diff(existing().get('userBidCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+            incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&
+            (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm'))) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',
+              'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'
+            ])
           ) ||
-          // Action: Private Negotiation Offer / Offer Acceptance / Status update
-          (incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'bidsCount', 'status', 'updatedAt']) &&
-           incoming().diff(existing()).affectedKeys().hasOnly(['currentBid', 'bidsCount', 'status', 'updatedAt', 'highestBidderId', 'highestBidderName', 'isExtended', 'reserveMet', 'extensionsCount', 'orderId', 'soldAt'])
+          // Action 2: View/Watch counter increments
+          (
+            isSignedIn() &&
+            incoming().status == existing().status &&
+            incoming().currentBid == existing().currentBid &&
+            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+            incoming().sellerId == existing().sellerId &&
+            incoming().startingPrice == existing().startingPrice &&
+            incoming().startTime == existing().startTime &&
+            incoming().endTime == existing().endTime &&
+            (
+              !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||
+              (
+                incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&
+                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
+              )
+            ) &&
+            (
+              !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||
+              (
+                incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&
+                incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&
+                incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1
+              )
+            ) &&
+            (
+              !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||
+              (
+                (
+                  existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
+                  incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)
+                ) ||
+                (
+                  !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
+                  (
+                    incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||
+                    (
+                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&
+                      incoming().get('viewerUserIds', []).hasAny([request.auth.uid])
+                    )
+                  )
+                )
+              )
+            ) &&
+            (
+              !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||
+              (
+                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
+              )
+            ) &&
+            (
+              !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||
+              (
+                (
+                  incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&
+                  !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
+                  existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
+                ) ||
+                (
+                  incoming().watchersCount >= 0 &&
+                  incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&
+                  exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
+                  !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
+                ) ||
+                (
+                  incoming().watchersCount == existing().get('watchersCount', 0)
+                )
+              )
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'
+            ])
           ) ||
-          // Action: View/Watch
-          (incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'])) ||
-          // Action: Status Change (Owner or System)
-          ((
-            existing().sellerId == request.auth.uid || 
-            existing().get('userId', '') == request.auth.uid || 
-            existing().get('ownerId', '') == request.auth.uid ||
-            (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&
-             get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)
-          ) && incoming().diff(existing()).affectedKeys().hasOnly([
-            'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
-            'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
-            'pausedRemainingTimeMs', 'remainingDurationMs', 'endTime', 'featuredUntil', 'boostedUntil',
-            'launchType', 'startTime', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt'
-          ])) ||
-          // Action: Full Update (Owner only if not active)
-          ((
-            existing().sellerId == request.auth.uid ||
-            (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&
-             get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)
-          ) && existing().status == 'upcoming' && isValidAuction(incoming()))
+          // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)
+          (
+            isAuctionSeller() &&
+            incoming().currentBid == existing().currentBid &&
+            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+            incoming().sellerId == existing().sellerId &&
+            incoming().startingPrice == existing().startingPrice &&
+            incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
+            (
+              // Go Live
+              (
+                incoming().status == 'active' &&
+                existing().status == 'upcoming' &&
+                incoming().startTime >= request.time - duration.value(5, 'm') &&
+                incoming().endTime > incoming().startTime
+              ) ||
+              // Pause
+              (
+                incoming().status == 'paused' &&
+                existing().status == 'active' &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime
+              ) ||
+              // Resume
+              (
+                incoming().status == 'active' &&
+                existing().status == 'paused' &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime > request.time
+              ) ||
+              // Cancel
+              (
+                incoming().status == 'cancelled' &&
+                existing().status in ['upcoming', 'active', 'paused'] &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime
+              ) ||
+              // Settlement by Seller past endTime
+              (
+                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
+                existing().status == 'active' &&
+                request.time >= existing().endTime &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime
+              ) ||
+              // Metadata update in same status
+              (
+                incoming().status == existing().status &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime
+              )
+            ) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
+              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',
+              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
+              'startTime', 'endTime'
+            ])
+          ) ||
+          // Action 4: Client Settlement by Winning Bidder past endTime
+          (
+            request.auth.uid == existing().get('highestBidderId', '') &&
+            existing().status == 'active' &&
+            request.time >= existing().endTime &&
+            incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
+            incoming().currentBid == existing().currentBid &&
+            incoming().highestBidderId == existing().highestBidderId &&
+            incoming().sellerId == existing().sellerId &&
+            incoming().startTime == existing().startTime &&
+            incoming().endTime == existing().endTime &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt'])
+          ) ||
+          // Action 5: Full Update for upcoming draft auctions (Owner only)
+          (
+            isAuctionSeller() &&
+            existing().status == 'upcoming' &&
+            incoming().status == 'upcoming' &&
+            incoming().sellerId == existing().sellerId &&
+            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
+            incoming().currentBid == incoming().startingPrice &&
+            incoming().get('highestBidderId', '') == '' &&
+            incoming().get('bidsCount', 0) == 0 &&
+            existing().get('bidsCount', 0) == 0 &&
+            !incoming().diff(existing()).affectedKeys().hasAny([
+              'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'
+            ]) &&
+            isValidAuction(incoming())
+          )
         )
       );
 
@@ -1113,21 +1376,19 @@ service cloud.firestore {
 
       match /bids/{bidId} {
         allow read: if true;
-        allow create, update: if isNotBlocked() 
-          && (incoming().userId == request.auth.uid || incoming().userId == 'simulator_bot_bidder' || isAdmin());
-        allow delete: if isNotBlocked() && (
-          existing().userId == request.auth.uid ||
-          request.auth.uid == 'simulator_bot_bidder' ||
-          isAdmin() ||
-          existing().get('sellerId', '') == request.auth.uid
-        );
+        allow create: if isNotBlocked() && (
+          incoming().userId == request.auth.uid &&
+          request.auth.uid != get(/databases/$(database)/documents/arena_auctions/$(auctionId)).data.sellerId &&
+          !(exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&
+            get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.get('sellerUid', '') == request.auth.uid) &&
+          get(/databases/$(database)/documents/arena_auctions/$(auctionId)).data.status == 'active' &&
+          request.time < get(/databases/$(database)/documents/arena_auctions/$(auctionId)).data.endTime &&
+          incoming().amount is number && incoming().amount > 0 &&
+          incoming().amount >= (get(/databases/$(database)/documents/arena_auctions/$(auctionId)).data.currentBid + get(/databases/$(database)/documents/arena_auctions/$(auctionId)).data.get('minIncrement', 1))
+        ) || isAdmin();
+        allow update: if false;
+        allow delete: if isAdmin();
       }
-    }
-    
-    match /{path=**}/bids/{bidId} {
-      allow read: if true;
-      allow create, update: if isNotBlocked() && isSignedIn();
-      allow delete: if isNotBlocked() && isSignedIn();
     }
 
     match /{path=**}/private/{docId} {
@@ -1146,33 +1407,119 @@ service cloud.firestore {
         );
     }
 
+    function isNegotiationSeller(negData) {
+      return isSignedIn() && (
+        isAdmin() ||
+        negData.get('sellerId', '') == request.auth.uid ||
+        (
+          negData.get('sellerId', '') is string &&
+          negData.get('sellerId', '').matches('^anon_seller_.*') &&
+          exists(/databases/$(database)/documents/arena_auctions/$(negData.get('auctionId', ''))/private/seller) &&
+          get(/databases/$(database)/documents/arena_auctions/$(negData.get('auctionId', ''))/private/seller).data.get('sellerUid', '') == request.auth.uid
+        )
+      );
+    }
+
+    function isNegotiationParticipant(negData) {
+      return isSignedIn() && (
+        isAdmin() ||
+        negData.get('buyerId', '') == request.auth.uid ||
+        negData.get('userId', '') == request.auth.uid ||
+        negData.get('ownerId', '') == request.auth.uid ||
+        negData.get('sellerId', '') == request.auth.uid ||
+        (
+          negData.get('sellerId', '') is string &&
+          negData.get('sellerId', '').matches('^anon_seller_.*') &&
+          exists(/databases/$(database)/documents/arena_auctions/$(negData.get('auctionId', ''))/private/seller) &&
+          get(/databases/$(database)/documents/arena_auctions/$(negData.get('auctionId', ''))/private/seller).data.get('sellerUid', '') == request.auth.uid
+        )
+      );
+    }
+
+    function isValidOfferSender(negData) {
+      return isAdmin() ||
+        (negData.get('buyerId', '') == request.auth.uid && incoming().get('senderId', '') == request.auth.uid) ||
+        (isNegotiationSeller(negData) && (
+          incoming().get('senderId', '') == request.auth.uid ||
+          incoming().get('senderId', '') == negData.get('sellerId', '')
+        ));
+    }
+
     match /arena_negotiations/{negotiationId} {
-      allow read: if true;
-      allow create, update: if isNotBlocked() && isSignedIn();
+      allow read: if isNegotiationParticipant(resource.data);
+      allow create: if isNotBlocked() && isSignedIn() &&
+        (incoming().get('buyerId', '') == request.auth.uid || isNegotiationSeller(incoming())) &&
+        incoming().get('auctionId', '') is string &&
+        incoming().get('sellerId', '') is string &&
+        incoming().get('buyerId', '') is string &&
+        exists(/databases/$(database)/documents/arena_auctions/$(incoming().get('auctionId', ''))) &&
+        (!('sharedContactDetails' in incoming()) || isNegotiationSeller(incoming()));
+      allow update: if isNotBlocked() &&
+        isNegotiationParticipant(existing()) &&
+        incoming().get('buyerId', '') == existing().get('buyerId', '') &&
+        incoming().get('sellerId', '') == existing().get('sellerId', '') &&
+        incoming().get('auctionId', '') == existing().get('auctionId', '') &&
+        incoming().get('id', existing().get('id', '')) == existing().get('id', '') &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'lastOfferAmount', 'lastOfferBy', 'lastBuyerOfferAt', 'updatedAt',
+          'expiresAt', 'acceptedAt', 'offerCount', 'offerCycleCount',
+          'contactRequested', 'contactRequestedAt', 'contactShared', 'contactSharedAt',
+          'sharedContactDetails', 'currency', 'currencySymbol', 'itemTitle', 'itemImage',
+          'itemPrice', 'isPaused', 'pausedBy', 'pausedAt', 'resumedAt',
+          'isRemoved', 'isPermanentlyRemoved', 'removedAt', 'removedBy', 'sellerAlias'
+        ]) &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['sharedContactDetails', 'contactShared', 'contactSharedAt']) || isNegotiationSeller(existing())) &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['contactRequested', 'contactRequestedAt']) || existing().get('buyerId', '') == request.auth.uid || isAdmin());
       allow delete: if isAdmin() || (isSignedIn() && (
-        existing().sellerId == request.auth.uid || 
-        existing().buyerId == request.auth.uid ||
-        existing().get('userId', '') == request.auth.uid
+        existing().get('buyerId', '') == request.auth.uid ||
+        existing().get('userId', '') == request.auth.uid ||
+        isNegotiationSeller(existing())
       ));
 
       match /offers/{offerId} {
-        allow read: if true;
-        allow create, update, delete: if isNotBlocked() && isSignedIn();
+        allow read: if (
+          exists(/databases/$(database)/documents/arena_negotiations/$(negotiationId)) &&
+          isNegotiationParticipant(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data)
+        ) || isAdmin();
+        allow create: if isNotBlocked() &&
+          exists(/databases/$(database)/documents/arena_negotiations/$(negotiationId)) &&
+          isNegotiationParticipant(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data) &&
+          isValidOfferSender(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data) &&
+          incoming().get('negotiationId', '') == negotiationId &&
+          incoming().get('action', '') in ['send', 'counter', 'accept', 'decline', 'withdraw', 'cancel', 'complete', 'request_contact', 'share_contact', 'message'] &&
+          (incoming().get('action', '') != 'share_contact' || isNegotiationSeller(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data)) &&
+          (incoming().get('action', '') != 'request_contact' || get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data.get('buyerId', '') == request.auth.uid || isAdmin());
+        allow update: if false;
+        allow delete: if isAdmin() || (isSignedIn() && (
+          !exists(/databases/$(database)/documents/arena_negotiations/$(negotiationId)) ||
+          isNegotiationParticipant(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data)
+        ));
       }
     }
 
     match /negotiation_channels/{channelId} {
-      allow read: if true;
-      allow create, update: if isNotBlocked() && isSignedIn();
-      allow delete: if isAdmin() || (isSignedIn() && (
-        existing().sellerId == request.auth.uid || 
-        existing().buyerId == request.auth.uid ||
-        existing().get('userId', '') == request.auth.uid
-      ));
+      allow read: if isNegotiationParticipant(resource.data);
+      allow create: if isNotBlocked() && isSignedIn() && isNegotiationParticipant(incoming());
+      allow update: if isNotBlocked() && isNegotiationParticipant(existing()) &&
+        incoming().get('buyerId', '') == existing().get('buyerId', '') &&
+        incoming().get('sellerId', '') == existing().get('sellerId', '') &&
+        (!incoming().diff(existing()).affectedKeys().hasAny(['sharedContactDetails', 'contactShared', 'contactSharedAt']) || isNegotiationSeller(existing()));
+      allow delete: if isAdmin() || (isSignedIn() && isNegotiationParticipant(existing()));
 
       match /offers/{offerId} {
-        allow read: if true;
-        allow create, update, delete: if isNotBlocked() && isSignedIn();
+        allow read: if (
+          exists(/databases/$(database)/documents/negotiation_channels/$(channelId)) &&
+          isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data)
+        ) || isAdmin();
+        allow create: if isNotBlocked() &&
+          exists(/databases/$(database)/documents/negotiation_channels/$(channelId)) &&
+          isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data) &&
+          incoming().get('senderId', '') == request.auth.uid;
+        allow update: if false;
+        allow delete: if isAdmin() || (isSignedIn() && (
+          !exists(/databases/$(database)/documents/negotiation_channels/$(channelId)) ||
+          isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data)
+        ));
       }
     }
 

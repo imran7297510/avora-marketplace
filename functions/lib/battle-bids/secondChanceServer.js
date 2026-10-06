@@ -332,7 +332,10 @@ async function processSecondChanceForPrimaryOrder(orderId, orderData) {
  * to PAYMENT_EXPIRED, the authoritative second-chance offer creation and notification
  * pipeline is guaranteed to execute.
  */
-exports.onBattleBidsOrderPaymentExpiredTrigger = (0, firestore_2.onDocumentUpdated)('orders/{orderId}', async (event) => {
+exports.onBattleBidsOrderPaymentExpiredTrigger = (0, firestore_2.onDocumentUpdated)({
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     if (!beforeData || !afterData) {
@@ -374,7 +377,10 @@ exports.onBattleBidsOrderPaymentExpiredTrigger = (0, firestore_2.onDocumentUpdat
  * Utilizes resolveAuthoritativeSellerUidServer to guarantee delivery to the real seller UID
  * and ensure anon_seller_* synthetic identifiers are never used as notification recipients.
  */
-exports.onSecondChanceOfferUpdatedTrigger = (0, firestore_2.onDocumentUpdated)('second_chance_offers/{offerId}', async (event) => {
+exports.onSecondChanceOfferUpdatedTrigger = (0, firestore_2.onDocumentUpdated)({
+    document: 'second_chance_offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     if (!beforeData || !afterData) {

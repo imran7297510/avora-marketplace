@@ -430,6 +430,30 @@ export const ArenaService = {
         }
 
         if (finalStatus === 'sold' && auctionData.highestBidderId) {
+          // Authoritatively resolve seller UID (never store anon_seller_* as order sellerId)
+          let authoritativeSellerId = auctionData.sellerId;
+          const isAnonymous = Boolean(
+            auctionData.isNegotiationOnly ||
+            (auctionData.sellerId && auctionData.sellerId.startsWith('anon_seller_'))
+          );
+
+          if (isAnonymous) {
+            const privateSellerRef = doc(db, 'arena_auctions', auctionId, 'private', 'seller');
+            const privateSellerDoc = await transaction.get(privateSellerRef);
+            if (privateSellerDoc.exists()) {
+              const privateData = privateSellerDoc.data();
+              if (privateData?.sellerUid && typeof privateData.sellerUid === 'string' && !privateData.sellerUid.startsWith('anon_seller_')) {
+                authoritativeSellerId = privateData.sellerUid.trim();
+              } else {
+                console.error(`[ArenaService.completeAuction] Anonymous auction ${auctionId} missing valid sellerUid in private/seller. Failing closed.`);
+                return;
+              }
+            } else {
+              console.error(`[ArenaService.completeAuction] Anonymous auction ${auctionId} missing private/seller record. Failing closed.`);
+              return;
+            }
+          }
+
           const nowMs = Date.now();
           const paymentDeadlineMs = nowMs + BATTLE_BIDS_PAYMENT_DEADLINE_HOURS * 3600 * 1000;
           const paymentDeadlineTimestamp = Timestamp.fromDate(new Date(paymentDeadlineMs));
@@ -447,7 +471,7 @@ export const ArenaService = {
               listingId: auctionId,
               itemTitle: auctionData.title || 'Battle Bids Item',
               itemImage: primaryImage,
-              sellerId: auctionData.sellerId,
+              sellerId: authoritativeSellerId,
               sellerName: auctionData.sellerName || 'Verified Seller',
               sellerEmail: sellerEmail,
               buyerId: auctionData.highestBidderId,

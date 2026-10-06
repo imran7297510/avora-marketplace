@@ -13,7 +13,7 @@ export const MODERATION_METRICS_PATH = 'system_metrics';
 export const MODERATION_METRICS_DOC_ID = 'moderation';
 
 export const getModerationMetricsRef = (): DocumentReference => {
-  const db = getFirestore();
+  const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
   return db.collection(MODERATION_METRICS_PATH).doc(MODERATION_METRICS_DOC_ID);
 };
 

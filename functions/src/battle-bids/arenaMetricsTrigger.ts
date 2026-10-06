@@ -7,7 +7,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 const METRICS_DOC_PATH = 'system_metrics';
 const METRICS_DOC_ID = 'arena';
@@ -74,7 +74,10 @@ function getAuctionLiveQualification(data: any, nowMs: number): {
  * Employs exact-once transaction idempotency via system_metrics/arena/processed_events.
  */
 export const onArenaAuctionWrittenMetricsTrigger = onDocumentWritten(
-  'arena_auctions/{auctionId}',
+  {
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const eventId = event.id;
     if (!eventId) {
@@ -183,7 +186,10 @@ export const onArenaAuctionWrittenMetricsTrigger = onDocumentWritten(
  * Filters strictly for source === 'battle_bids' and authoritative settled states.
  */
 export const onArenaOrderWrittenMetricsTrigger = onDocumentWritten(
-  'orders/{orderId}',
+  {
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const eventId = event.id;
     const beforeData = event.data?.before.data();

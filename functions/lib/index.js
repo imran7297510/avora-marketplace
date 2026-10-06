@@ -14,15 +14,30 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RETENTION_DURATION_MS = exports.REPORT_RETENTION_ENABLED = exports.executeReportRetentionDryRun = exports.executeReportRetention = exports.processReportRetentionScheduled = exports.onArenaOrderWrittenMetricsTrigger = exports.onArenaAuctionWrittenMetricsTrigger = exports.onListingWrittenMetricsTrigger = exports.onSecondChanceOfferUpdatedTrigger = exports.onBattleBidsOrderPaymentExpiredTrigger = exports.onAuctionSettlementTrigger = exports.onAuctionOutbidTrigger = exports.onListingPriceDropTrigger = exports.onOfferCreatedTrigger = exports.onNegotiationUpdatedTrigger = exports.onNegotiationOfferCreatedTrigger = exports.recordAdminTrustEventCallable = exports.onListingSoldTrigger = exports.onOrderUpdatedTrigger = exports.reconcileArenaMetricsScheduled = exports.processStandardMarketplaceOrderExpirations = exports.processBattleBidsPaymentExpirations = void 0;
+exports.RETENTION_DURATION_MS = exports.REPORT_RETENTION_ENABLED = exports.executeReportRetentionDryRun = exports.executeReportRetention = exports.processReportRetentionScheduled = exports.onArenaOrderWrittenMetricsTrigger = exports.onArenaAuctionWrittenMetricsTrigger = exports.onListingWrittenMetricsTrigger = exports.settleExpiredBattleBidsAuctionsServer = exports.resolveAuthoritativeSellerUidServer = exports.onSecondChanceOfferUpdatedTrigger = exports.onBattleBidsOrderPaymentExpiredTrigger = exports.onAuctionSettlementTrigger = exports.onAuctionOutbidTrigger = exports.onListingPriceDropTrigger = exports.onOfferCreatedTrigger = exports.onNegotiationUpdatedTrigger = exports.onNegotiationOfferCreatedTrigger = exports.recordAdminTrustEventCallable = exports.onListingSoldTrigger = exports.onOrderUpdatedTrigger = exports.reconcileArenaMetricsScheduled = exports.processStandardMarketplaceOrderExpirations = exports.processBattleBidsPaymentExpirations = exports.processBattleBidsAuctionSettlements = void 0;
 const app_1 = require("firebase-admin/app");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const secondChanceServer_1 = require("./battle-bids/secondChanceServer");
 const standardOrderExpiration_1 = require("./marketplace/standardOrderExpiration");
 const arenaMetricsTrigger_1 = require("./battle-bids/arenaMetricsTrigger");
+const auctionSettlementServer_1 = require("./battle-bids/auctionSettlementServer");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
+/**
+ * Scheduled Cloud Function (v2): Runs every 5 minutes.
+ * Server-authoritative worker for expired Battle Bids auction settlement.
+ * Settles active auctions whose endTime has elapsed, resolving authoritative seller UIDs
+ * and creating canonical BB-${auctionId} payment orders idempotently.
+ */
+exports.processBattleBidsAuctionSettlements = (0, scheduler_1.onSchedule)({
+    schedule: 'every 5 minutes',
+    timeZone: 'UTC',
+    retryCount: 1
+}, async () => {
+    const res = await (0, auctionSettlementServer_1.settleExpiredBattleBidsAuctionsServer)();
+    console.log('[processBattleBidsAuctionSettlements] Completed auction settlement scan:', res);
+});
 /**
  * Scheduled Cloud Function (v2): Runs every 15 minutes.
  * Scans for overdue Battle Bids primary payment orders (48h deadline lapsed),
@@ -80,6 +95,9 @@ Object.defineProperty(exports, "onAuctionSettlementTrigger", { enumerable: true,
 var secondChanceServer_2 = require("./battle-bids/secondChanceServer");
 Object.defineProperty(exports, "onBattleBidsOrderPaymentExpiredTrigger", { enumerable: true, get: function () { return secondChanceServer_2.onBattleBidsOrderPaymentExpiredTrigger; } });
 Object.defineProperty(exports, "onSecondChanceOfferUpdatedTrigger", { enumerable: true, get: function () { return secondChanceServer_2.onSecondChanceOfferUpdatedTrigger; } });
+Object.defineProperty(exports, "resolveAuthoritativeSellerUidServer", { enumerable: true, get: function () { return secondChanceServer_2.resolveAuthoritativeSellerUidServer; } });
+var auctionSettlementServer_2 = require("./battle-bids/auctionSettlementServer");
+Object.defineProperty(exports, "settleExpiredBattleBidsAuctionsServer", { enumerable: true, get: function () { return auctionSettlementServer_2.settleExpiredBattleBidsAuctionsServer; } });
 var marketplaceMetricsTrigger_1 = require("./marketplace/marketplaceMetricsTrigger");
 Object.defineProperty(exports, "onListingWrittenMetricsTrigger", { enumerable: true, get: function () { return marketplaceMetricsTrigger_1.onListingWrittenMetricsTrigger; } });
 var arenaMetricsTrigger_2 = require("./battle-bids/arenaMetricsTrigger");

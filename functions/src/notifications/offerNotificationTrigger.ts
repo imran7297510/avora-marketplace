@@ -6,7 +6,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /offers/{offerId} creation.
@@ -15,7 +15,10 @@ const db = getFirestore();
  * notifications to both root /notifications and /users/{sellerUid}/notifications.
  */
 export const onOfferCreatedTrigger = onDocumentCreated(
-  'offers/{offerId}',
+  {
+    document: 'offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const offerData = event.data?.data();
     if (!offerData) {

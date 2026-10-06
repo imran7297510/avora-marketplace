@@ -7,7 +7,7 @@ const firestore_2 = require("firebase-admin/firestore");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /arena_auctions/{auctionId} updates.
  * Detects genuine outbid state transitions, resolves the previous highest bidder UID
@@ -15,7 +15,10 @@ const db = (0, firestore_2.getFirestore)();
  * and idempotently dispatches 'outbid' notifications to both root /notifications
  * and /users/{recipientUid}/notifications using deterministic event IDs.
  */
-exports.onAuctionOutbidTrigger = (0, firestore_1.onDocumentUpdated)('arena_auctions/{auctionId}', async (event) => {
+exports.onAuctionOutbidTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     // 1. Snapshot existence validation

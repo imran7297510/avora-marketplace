@@ -3,10 +3,29 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { expireOverdueBattleBidsOrders } from './battle-bids/secondChanceServer';
 import { expireOverdueStandardOrders } from './marketplace/standardOrderExpiration';
 import { reconcileArenaMetricsServer } from './battle-bids/arenaMetricsTrigger';
+import { settleExpiredBattleBidsAuctionsServer } from './battle-bids/auctionSettlementServer';
 
 if (!getApps().length) {
   initializeApp();
 }
+
+/**
+ * Scheduled Cloud Function (v2): Runs every 5 minutes.
+ * Server-authoritative worker for expired Battle Bids auction settlement.
+ * Settles active auctions whose endTime has elapsed, resolving authoritative seller UIDs
+ * and creating canonical BB-${auctionId} payment orders idempotently.
+ */
+export const processBattleBidsAuctionSettlements = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'UTC',
+    retryCount: 1
+  },
+  async () => {
+    const res = await settleExpiredBattleBidsAuctionsServer();
+    console.log('[processBattleBidsAuctionSettlements] Completed auction settlement scan:', res);
+  }
+);
 
 /**
  * Scheduled Cloud Function (v2): Runs every 15 minutes.
@@ -88,8 +107,13 @@ export {
 
 export {
   onBattleBidsOrderPaymentExpiredTrigger,
-  onSecondChanceOfferUpdatedTrigger
+  onSecondChanceOfferUpdatedTrigger,
+  resolveAuthoritativeSellerUidServer
 } from './battle-bids/secondChanceServer';
+
+export {
+  settleExpiredBattleBidsAuctionsServer
+} from './battle-bids/auctionSettlementServer';
 
 export {
   onListingWrittenMetricsTrigger

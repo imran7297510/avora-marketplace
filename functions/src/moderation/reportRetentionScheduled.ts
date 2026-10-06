@@ -135,7 +135,7 @@ export function evaluateReportCandidate(
 export async function discoverRetentionCandidates(
   cutoffTimestamp: Timestamp
 ): Promise<CandidateReportRef[]> {
-  const db = getFirestore();
+  const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
   const candidates: CandidateReportRef[] = [];
 
   // 1. Marketplace Candidates (reports collection)
@@ -234,7 +234,7 @@ export async function processRetentionMicroTransaction(
   skipped: number;
   skippedReasons: Record<string, number>;
 }> {
-  const db = getFirestore();
+  const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
   const metricsRef = getModerationMetricsRef();
 
   return await db.runTransaction(async (transaction) => {
@@ -409,7 +409,7 @@ export async function executeReportRetention(): Promise<RetentionExecutionResult
  * Performs ZERO deletes and ZERO metric writes.
  */
 export async function executeReportRetentionDryRun(): Promise<RetentionDryRunResult> {
-  const db = getFirestore();
+  const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
   const cutoff = getTrustedServerCutoffTimestamp();
   const candidates = await discoverRetentionCandidates(cutoff);
 

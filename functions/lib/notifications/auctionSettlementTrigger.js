@@ -4,10 +4,11 @@ exports.onAuctionSettlementTrigger = void 0;
 const firestore_1 = require("firebase-functions/v2/firestore");
 const app_1 = require("firebase-admin/app");
 const firestore_2 = require("firebase-admin/firestore");
+const secondChanceServer_1 = require("../battle-bids/secondChanceServer");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /arena_auctions/{auctionId} status updates.
  * Dispatches settlement notifications ('auction_won' / 'auction_lost') to winner and seller
@@ -16,7 +17,10 @@ const db = (0, firestore_2.getFirestore)();
  * Excludes Private Negotiations (which are handled authoritatively by negotiationNotificationTrigger).
  * Employs deterministic notification IDs and batch writes.
  */
-exports.onAuctionSettlementTrigger = (0, firestore_1.onDocumentUpdated)('arena_auctions/{auctionId}', async (event) => {
+exports.onAuctionSettlementTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     // 1. Snapshot existence validation
@@ -41,10 +45,11 @@ exports.onAuctionSettlementTrigger = (0, firestore_1.onDocumentUpdated)('arena_a
         return;
     }
     const rawSellerId = typeof afterData.sellerId === 'string' ? afterData.sellerId.trim() : '';
-    if (!rawSellerId || rawSellerId.startsWith('anon_seller_')) {
+    const sellerUid = await (0, secondChanceServer_1.resolveAuthoritativeSellerUidServer)(auctionId, rawSellerId);
+    if (!sellerUid) {
+        console.warn(`[AUCTION_SETTLEMENT] Could not resolve authoritative seller UID for auction ${auctionId}. Skipping seller notification.`);
         return;
     }
-    const sellerUid = rawSellerId;
     const auctionTitle = afterData.title || beforeData.title || 'Battle Bids Item';
     try {
         const batch = db.batch();

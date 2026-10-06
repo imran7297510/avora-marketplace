@@ -417,7 +417,10 @@ export async function processSecondChanceForPrimaryOrder(
  * pipeline is guaranteed to execute.
  */
 export const onBattleBidsOrderPaymentExpiredTrigger = onDocumentUpdated(
-  'orders/{orderId}',
+  {
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
@@ -470,7 +473,10 @@ export const onBattleBidsOrderPaymentExpiredTrigger = onDocumentUpdated(
  * and ensure anon_seller_* synthetic identifiers are never used as notification recipients.
  */
 export const onSecondChanceOfferUpdatedTrigger = onDocumentUpdated(
-  'second_chance_offers/{offerId}',
+  {
+    document: 'second_chance_offers/{offerId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();

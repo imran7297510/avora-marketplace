@@ -7,7 +7,7 @@ const firestore_2 = require("firebase-admin/firestore");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 const METRICS_DOC_PATH = 'system_metrics';
 const METRICS_DOC_ID = 'marketplace';
 const PROCESSED_EVENTS_SUBCOLLECTION = 'processed_events';
@@ -66,7 +66,10 @@ const getQualifyingCity = (data) => {
  * automatically synchronizes the /system_metrics/marketplace aggregate atomically
  * with exact-once event idempotency protection against duplicate or retried deliveries.
  */
-exports.onListingWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)('listings/{listingId}', async (event) => {
+exports.onListingWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)({
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const eventId = event.id;
     if (!eventId) {
         console.warn('[onListingWrittenMetricsTrigger] Missing event.id on invocation. Proceeding without event tracking.');

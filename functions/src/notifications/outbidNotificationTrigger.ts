@@ -6,7 +6,7 @@ if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /arena_auctions/{auctionId} updates.
@@ -16,7 +16,10 @@ const db = getFirestore();
  * and /users/{recipientUid}/notifications using deterministic event IDs.
  */
 export const onAuctionOutbidTrigger = onDocumentUpdated(
-  'arena_auctions/{auctionId}',
+  {
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();

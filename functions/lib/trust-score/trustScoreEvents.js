@@ -9,12 +9,15 @@ const trustScoreBackend_1 = require("./trustScoreBackend");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Automated Firestore Trigger: Fires when an Order document is updated.
  * Triggers Trust Score completion (+2 for buyer, +3 for seller) when order status transitions to 'SOLD', 'DEAL_DONE', or 'PAID'.
  */
-exports.onOrderUpdatedTrigger = (0, firestore_1.onDocumentUpdated)('orders/{orderId}', async (event) => {
+exports.onOrderUpdatedTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     if (!beforeData || !afterData)
@@ -48,7 +51,10 @@ exports.onOrderUpdatedTrigger = (0, firestore_1.onDocumentUpdated)('orders/{orde
 /**
  * Automated Firestore Trigger: Fires when a Listing document status transitions to 'SOLD'.
  */
-exports.onListingSoldTrigger = (0, firestore_1.onDocumentUpdated)('listings/{listingId}', async (event) => {
+exports.onListingSoldTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     if (!beforeData || !afterData)

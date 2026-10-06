@@ -7,7 +7,7 @@ const firestore_1 = require("firebase-admin/firestore");
 exports.MODERATION_METRICS_PATH = 'system_metrics';
 exports.MODERATION_METRICS_DOC_ID = 'moderation';
 const getModerationMetricsRef = () => {
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
     return db.collection(exports.MODERATION_METRICS_PATH).doc(exports.MODERATION_METRICS_DOC_ID);
 };
 exports.getModerationMetricsRef = getModerationMetricsRef;

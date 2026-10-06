@@ -7,7 +7,7 @@ const firestore_2 = require("firebase-admin/firestore");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 /**
  * Deterministically parses a Firestore/JavaScript timestamp value into milliseconds.
  * Returns null if the value is missing, invalid, or cannot be safely converted.
@@ -50,7 +50,10 @@ function extractTimestampMs(val) {
  * excludes the listing owner, and idempotently dispatches PRICE_DROP notifications
  * using deterministic IDs to both root /notifications and /users/{watcherUid}/notifications.
  */
-exports.onListingPriceDropTrigger = (0, firestore_1.onDocumentUpdated)('listings/{listingId}', async (event) => {
+exports.onListingPriceDropTrigger = (0, firestore_1.onDocumentUpdated)({
+    document: 'listings/{listingId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
     // 1. Snapshot existence validation

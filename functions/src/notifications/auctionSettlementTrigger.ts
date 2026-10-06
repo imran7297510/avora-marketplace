@@ -1,12 +1,13 @@
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { initializeApp, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { resolveAuthoritativeSellerUidServer } from '../battle-bids/secondChanceServer';
 
 if (!getApps().length) {
   initializeApp();
 }
 
-const db = getFirestore();
+const db = getFirestore('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 
 /**
  * Server-authoritative Cloud Function (v2): Triggered on /arena_auctions/{auctionId} status updates.
@@ -17,7 +18,10 @@ const db = getFirestore();
  * Employs deterministic notification IDs and batch writes.
  */
 export const onAuctionSettlementTrigger = onDocumentUpdated(
-  'arena_auctions/{auctionId}',
+  {
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+  },
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
@@ -50,11 +54,12 @@ export const onAuctionSettlementTrigger = onDocumentUpdated(
     }
 
     const rawSellerId = typeof afterData.sellerId === 'string' ? afterData.sellerId.trim() : '';
-    if (!rawSellerId || rawSellerId.startsWith('anon_seller_')) {
+    const sellerUid = await resolveAuthoritativeSellerUidServer(auctionId, rawSellerId);
+    if (!sellerUid) {
+      console.warn(`[AUCTION_SETTLEMENT] Could not resolve authoritative seller UID for auction ${auctionId}. Skipping seller notification.`);
       return;
     }
 
-    const sellerUid = rawSellerId;
     const auctionTitle = afterData.title || beforeData.title || 'Battle Bids Item';
 
     try {

@@ -98,7 +98,7 @@ function evaluateReportCandidate(docData, collectionName, cutoffTimestamp) {
  * Uses explicit positive inclusion and strict bounds.
  */
 async function discoverRetentionCandidates(cutoffTimestamp) {
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
     const candidates = [];
     // 1. Marketplace Candidates (reports collection)
     // Query A: RESOLVED reports past 365 days
@@ -175,7 +175,7 @@ async function discoverRetentionCandidates(cutoffTimestamp) {
  * Atomically deletes verified eligible reports and decrements moderation metrics.
  */
 async function processRetentionMicroTransaction(chunk, cutoffTimestamp) {
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
     const metricsRef = (0, moderationMetricsBackend_1.getModerationMetricsRef)();
     return await db.runTransaction(async (transaction) => {
         // === STEP 1: ALL READS ===
@@ -321,7 +321,7 @@ async function executeReportRetention() {
  * Performs ZERO deletes and ZERO metric writes.
  */
 async function executeReportRetentionDryRun() {
-    const db = (0, firestore_1.getFirestore)();
+    const db = (0, firestore_1.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
     const cutoff = getTrustedServerCutoffTimestamp();
     const candidates = await discoverRetentionCandidates(cutoff);
     let eligibleResolvedCount = 0;

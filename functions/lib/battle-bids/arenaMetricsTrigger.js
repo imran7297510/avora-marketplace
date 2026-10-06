@@ -9,7 +9,7 @@ const currencyRates_1 = require("./currencyRates");
 if (!(0, app_1.getApps)().length) {
     (0, app_1.initializeApp)();
 }
-const db = (0, firestore_2.getFirestore)();
+const db = (0, firestore_2.getFirestore)('ai-studio-c5cea893-acec-4774-a11a-e26679ae7862');
 const METRICS_DOC_PATH = 'system_metrics';
 const METRICS_DOC_ID = 'arena';
 const PROCESSED_EVENTS_SUBCOLLECTION = 'processed_events';
@@ -60,7 +60,10 @@ function getAuctionLiveQualification(data, nowMs) {
  * Synchronizes /system_metrics/arena upon any mutation to arena_auctions/{auctionId}.
  * Employs exact-once transaction idempotency via system_metrics/arena/processed_events.
  */
-exports.onArenaAuctionWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)('arena_auctions/{auctionId}', async (event) => {
+exports.onArenaAuctionWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)({
+    document: 'arena_auctions/{auctionId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const eventId = event.id;
     if (!eventId) {
         console.warn('[onArenaAuctionWrittenMetricsTrigger] Missing event.id on invocation. Proceeding without event tracking.');
@@ -151,7 +154,10 @@ exports.onArenaAuctionWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)
  * Synchronizes /system_metrics/arena upon any mutation to orders/{orderId}.
  * Filters strictly for source === 'battle_bids' and authoritative settled states.
  */
-exports.onArenaOrderWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)('orders/{orderId}', async (event) => {
+exports.onArenaOrderWrittenMetricsTrigger = (0, firestore_1.onDocumentWritten)({
+    document: 'orders/{orderId}',
+    database: 'ai-studio-c5cea893-acec-4774-a11a-e26679ae7862'
+}, async (event) => {
     const eventId = event.id;
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
