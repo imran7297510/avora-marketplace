@@ -108,6 +108,7 @@ import { executeCentralBlock, executeCentralUnblock, executeCentralBan, executeC
 import { formatPKR } from "../lib/utils";
 import { formatPrice, getCurrencyByCode, calculateRefundAmounts } from "../lib/currencies";
 import { PROMOTION_PACKAGES } from "../lib/promotionPackages";
+import { CREDIT_PACKAGES } from "../features/credits/constants";
 import { CreditsService } from "../features/credits/services/creditsService";
 import { Link } from "react-router-dom";
 import { AdminSearch } from "../components/AdminSearch";
@@ -377,7 +378,6 @@ export const ADMIN_SECTIONS = [
   { id: "search", label: "Search", num: 7 },
   { id: "support", label: "Support Tickets", num: 8 },
   { id: "promotions", label: "PROMO Requests", num: 9 },
-  { id: "creditApplications", label: "Credit Applications 🪙", num: 10 },
   { id: "appeals", label: "Appeals", num: 11 },
   { id: "refunds", label: "Refunds", num: 12 },
   { id: "broadcast", label: "Community Broadcast", num: 13 },
@@ -536,7 +536,10 @@ export function Admin() {
       { id: "battleBidsModeration", label: "Arena Moderation", icon: ShieldAlert },
       { id: "broadcast", label: "Community Broadcast", icon: Speaker },
       { id: "disputes", label: "Deal Disputes", icon: ShieldAlert },
-      ...(isSuperAdmin ? [{ id: "adminOverview", label: "Admin Overview", icon: LayoutGrid }] : []),
+      ...(isSuperAdmin ? [
+        { id: "adminOverview", label: "Admin Overview", icon: LayoutGrid },
+        { id: "creditApplications", label: "Credit Applications", icon: Coins },
+      ] : []),
       ...(isAdmin ? [{ id: "authAdmins", label: "Admins & Verifiers", icon: UserPlus }] : []),
       ...(isSuperAdmin || isAuthorizedAdmin || isAuthorizedPaymentVerifier ? [{ id: "paymentVerifiers", label: "Payment Verifiers", icon: ShieldCheck }] : []),
     ];
@@ -1037,7 +1040,22 @@ export function Admin() {
   const [creditAppActioning, setCreditAppActioning] = useState<string | null>(null);
 
   const handleApproveCreditApp = async (app: any) => {
-    if (!confirm(`Approve credit purchase for ${app.userName || 'User'}? This will immediately issue ${app.credits} Credits.`)) {
+    if (!isSuperAdmin) {
+      alert("Only Super Admins can approve credit applications.");
+      return;
+    }
+
+    const matchedPack = CREDIT_PACKAGES.find((p) => p.id === app.packageId);
+    if (!matchedPack) {
+      alert(`Approval blocked: Unknown or invalid package ID "${app.packageId}". Cannot approve unverified packages.`);
+      return;
+    }
+
+    const authoritativeCredits = matchedPack.credits;
+    const authoritativePrice = matchedPack.usdPrice;
+    const authoritativeName = matchedPack.name;
+
+    if (!confirm(`Approve credit purchase for ${app.userName || 'User'}? This will authoritatively issue ${authoritativeCredits} Credits (${authoritativeName} - $${authoritativePrice.toFixed(2)} USD).`)) {
       return;
     }
     setCreditAppActioning(app.id);
@@ -1046,10 +1064,10 @@ export function Admin() {
       const res = await CreditsService.grantCredits({
         applicationId: app.id,
         userId: app.userId,
-        creditsAmount: app.credits,
-        packageName: app.packageName || 'Credit Package',
-        packageId: app.packageId || '',
-        usdPrice: app.usdPrice || 0,
+        creditsAmount: authoritativeCredits,
+        packageName: authoritativeName,
+        packageId: matchedPack.id,
+        usdPrice: authoritativePrice,
         paymentMethod: app.paymentMethod || 'Manual',
         adminIdentifier,
       });
@@ -1059,7 +1077,15 @@ export function Admin() {
         setCreditApplications((prev) =>
           prev.map((a) =>
             a.id === app.id
-              ? { ...a, status: 'APPROVED', approvedAt: new Date(), approvedBy: adminIdentifier }
+              ? {
+                  ...a,
+                  status: 'APPROVED',
+                  credits: authoritativeCredits,
+                  usdPrice: authoritativePrice,
+                  packageName: authoritativeName,
+                  approvedAt: new Date(),
+                  approvedBy: adminIdentifier,
+                }
               : a
           )
         );
@@ -1075,6 +1101,10 @@ export function Admin() {
   };
 
   const handleRejectCreditApp = async (app: any) => {
+    if (!isSuperAdmin) {
+      alert("Only Super Admins can reject credit applications.");
+      return;
+    }
     const reason = prompt('Enter rejection reason (optional):', 'Payment verification unsuccessful.');
     if (reason === null) return;
 
@@ -1110,8 +1140,16 @@ export function Admin() {
   };
 
   const handleApproveCreditRefund = async (app: any) => {
-    const refundAmt = app.refundCalculatedAmount || (Number(app.usdPrice || 0) * 0.95).toFixed(2);
-    if (!confirm(`Confirm 95% refund of $${refundAmt} USD for user ${app.userName || 'User'} to ${app.refundBankName || 'Bank'} (${app.refundAccountNumber})?`)) {
+    if (!isSuperAdmin) {
+      alert("Only Super Admins can approve credit refunds.");
+      return;
+    }
+
+    const matchedPack = CREDIT_PACKAGES.find((p) => p.id === app.packageId);
+    const authoritativeUsdPrice = matchedPack ? matchedPack.usdPrice : Number(app.usdPrice || 0);
+    const refundAmt = (authoritativeUsdPrice * 0.95).toFixed(2);
+
+    if (!confirm(`Confirm authoritative 95% refund of $${refundAmt} USD for user ${app.userName || 'User'} (${matchedPack?.name || app.packageName || 'Credit Purchase'}) to ${app.refundBankName || 'Bank'} (${app.refundAccountNumber})?`)) {
       return;
     }
     setCreditAppActioning(app.id);
@@ -1128,7 +1166,7 @@ export function Admin() {
         id: notifRef.id,
         userId: app.userId,
         title: "💸 Credit Application Refund Completed",
-        message: `Your 95% refund of $${refundAmt} USD for ${app.packageName || 'Credit Purchase'} has been completed by finance to account ${app.refundAccountNumber}.`,
+        message: `Your 95% refund of $${refundAmt} USD for ${matchedPack?.name || app.packageName || 'Credit Purchase'} has been completed by finance to account ${app.refundAccountNumber}.`,
         read: false,
         createdAt: serverTimestamp(),
       });
@@ -1938,6 +1976,10 @@ export function Admin() {
           setPausedUsers([]);
         }
       } else if (activeTab === "creditApplications") {
+        if (!isSuperAdmin) {
+          setCreditApplications([]);
+          return;
+        }
         try {
           const qApps = query(
             collection(db, "credit_applications"),
@@ -3339,6 +3381,30 @@ export function Admin() {
       return;
     try {
       if (action === "APPROVED") {
+        const appDoc = await getDoc(doc(db, "verification_applications", appId));
+        if (!appDoc.exists()) {
+          alert("Cannot approve Premium Seller application: Verification application document was not found.");
+          return;
+        }
+
+        const appData = appDoc.data();
+
+        // 1. Payment Verification Gate
+        if (appData.verificationStage !== "PAYMENT_VERIFIED" && appData.verificationStage !== "VERIFIED") {
+          alert("Cannot approve Premium Seller application: Payment has not been verified/confirmed by an Authorized Payment Verifier yet.");
+          return;
+        }
+
+        if (!appData.receivedAmount || typeof appData.receivedAmount !== "number" || appData.receivedAmount <= 0) {
+          alert("Cannot approve Premium Seller application: Authoritative received amount recorded by payment verifiers must be greater than zero.");
+          return;
+        }
+
+        // 2. Authoritative Catalog Duration Resolution & Coupling
+        const allowedDurations = [30, 90, 180, 365];
+        const rawAppDuration = Number(appData.durationDays || durationDays || 30);
+        const appDuration = allowedDurations.includes(rawAppDuration) ? rawAppDuration : 30;
+
         const profileRef = doc(db, "users", userId);
         const pSnap = await getDoc(profileRef);
         if (pSnap.exists()) {
@@ -3354,20 +3420,6 @@ export function Admin() {
               "Cannot approve Premium Seller application: User KYC is not approved.",
             );
             return;
-          }
-
-          // Enforce selected duration from application
-          let appDuration = durationDays || 30;
-          try {
-            const appDoc = await getDoc(doc(db, "verification_applications", appId));
-            if (appDoc.exists()) {
-              const appData = appDoc.data();
-              if (appData.durationDays) {
-                appDuration = appData.durationDays;
-              }
-            }
-          } catch (e) {
-            console.error("Error reading verification application for duration checking:", e);
           }
 
           const expirationDate = new Date();
@@ -12674,7 +12726,7 @@ export function Admin() {
                 </div>
               )}
 
-              {activeTab === "creditApplications" && (
+              {activeTab === "creditApplications" && isSuperAdmin && (
                 <div className="space-y-6 font-sans">
                   {/* Header */}
                   <div className="bg-white p-6 rounded-[2rem] border border-stone-200/60 shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-4">

@@ -106,6 +106,10 @@ export {
 } from './notifications/auctionSettlementTrigger';
 
 export {
+  onPromotionRefundRequestedTrigger
+} from './notifications/promotionRefundTrigger';
+
+export {
   onBattleBidsOrderPaymentExpiredTrigger,
   onSecondChanceOfferUpdatedTrigger,
   resolveAuthoritativeSellerUidServer

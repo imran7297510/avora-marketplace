@@ -136,19 +136,19 @@ service cloud.firestore {
 
     match /reports/{reportId} {
       allow read: if (isSignedIn() && resource.data.reporterId == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn();
+      allow create: if isAdmin() || (isSignedIn() && incoming().reporterId == request.auth.uid);
       allow write: if isAdmin();
     }
 
     match /disputes/{disputeId} {
       allow read: if (isSignedIn() && (resource.data.complainantId == request.auth.uid || resource.data.reportedUserId == request.auth.uid)) || isAdmin();
-      allow create: if isSignedIn();
+      allow create: if isAdmin() || (isSignedIn() && incoming().complainantId == request.auth.uid);
       allow update, delete: if isAdmin();
     }
 
     match /profileReports/{reportId} {
       allow read: if (isSignedIn() && resource.data.reporterId == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn();
+      allow create: if isAdmin() || (isSignedIn() && incoming().reporterId == request.auth.uid);
       allow write: if isAdmin();
     }
 
@@ -277,16 +277,133 @@ service cloud.firestore {
 
     match /promotionRequests/{requestId} {
       allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isAdmin() || (
-        isSignedIn() &&
+      allow create: if isSignedIn() &&
         incoming().userId == request.auth.uid &&
+        (!('status' in incoming()) || incoming().status == 'PENDING') &&
         !('receivedAmount' in incoming()) &&
         (!('verificationStage' in incoming()) || incoming().verificationStage == 'NONE') &&
         (!('isActivated' in incoming()) || incoming().isActivated == false) &&
         (!('resumeConsumed' in incoming()) || incoming().resumeConsumed == false) &&
         (!('refundRequested' in incoming()) || incoming().refundRequested == false) &&
-        (!('refundStatus' in incoming()) || incoming().refundStatus == null)
-      );
+        (!('refundStatus' in incoming()) || incoming().refundStatus == null) &&
+        !('approvedAt' in incoming()) &&
+        !('approvedBy' in incoming()) &&
+        !('verifiedBy' in incoming()) &&
+        !('verifiedByUid' in incoming()) &&
+        !('paymentVerifiedBy' in incoming()) &&
+        !('paymentVerifiedByUid' in incoming()) &&
+        !('paymentVerifiedAt' in incoming()) &&
+        !('rejectedAt' in incoming()) &&
+        !('rejectedBy' in incoming()) &&
+        !('refundApprovedAt' in incoming()) &&
+        !('refundApprovedBy' in incoming()) &&
+        !('refundCalculatedAmount' in incoming()) &&
+        // Authoritative Promotion Catalog Whitelist & Value Integrity Invariants
+        (
+          // 1. FEATURED BADGE (PKR, USD, USDT)
+          (
+            incoming().type == 'FEATURED' &&
+            incoming().durationDays == 7 &&
+            incoming().planName == '7 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 499) ||
+              (incoming().currency == 'USD' && incoming().amount == 2) ||
+              (incoming().currency == 'USDT' && incoming().amount == 2)
+            )
+          ) ||
+          (
+            incoming().type == 'FEATURED' &&
+            incoming().durationDays == 15 &&
+            incoming().planName == '15 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 899) ||
+              (incoming().currency == 'USD' && incoming().amount == 3.3) ||
+              (incoming().currency == 'USDT' && incoming().amount == 3.5)
+            )
+          ) ||
+          (
+            incoming().type == 'FEATURED' &&
+            incoming().durationDays == 30 &&
+            incoming().planName == '30 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 1499) ||
+              (incoming().currency == 'USD' && incoming().amount == 5.5) ||
+              (incoming().currency == 'USDT' && incoming().amount == 5.5)
+            )
+          ) ||
+          // 2. BOOSTED BADGE (PKR, USD, USDT)
+          (
+            incoming().type == 'BOOST' &&
+            incoming().durationDays == 3 &&
+            incoming().planName == '3 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 299) ||
+              (incoming().currency == 'USD' && incoming().amount == 1.10) ||
+              (incoming().currency == 'USDT' && incoming().amount == 1.10)
+            )
+          ) ||
+          (
+            incoming().type == 'BOOST' &&
+            incoming().durationDays == 7 &&
+            incoming().planName == '7 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 599) ||
+              (incoming().currency == 'USD' && incoming().amount == 2.30) ||
+              (incoming().currency == 'USDT' && incoming().amount == 2.30)
+            )
+          ) ||
+          (
+            incoming().type == 'BOOST' &&
+            incoming().durationDays == 15 &&
+            incoming().planName == '15 Days' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 999) ||
+              (incoming().currency == 'USD' && incoming().amount == 3.80) ||
+              (incoming().currency == 'USDT' && incoming().amount == 3.80)
+            )
+          ) ||
+          // 3. VERIFIED / PREMIUM BADGE (PKR, USD, USDT)
+          (
+            incoming().type == 'VERIFIED' &&
+            incoming().durationDays == 30 &&
+            incoming().planName == '1 Month' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 1999) ||
+              (incoming().currency == 'USD' && incoming().amount == 7.5) ||
+              (incoming().currency == 'USDT' && incoming().amount == 7.5)
+            )
+          ) ||
+          (
+            incoming().type == 'VERIFIED' &&
+            incoming().durationDays == 90 &&
+            incoming().planName == '3 Months' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 4999) ||
+              (incoming().currency == 'USD' && incoming().amount == 18) ||
+              (incoming().currency == 'USDT' && incoming().amount == 18)
+            )
+          ) ||
+          (
+            incoming().type == 'VERIFIED' &&
+            incoming().durationDays == 180 &&
+            incoming().planName == '6 Months' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 8999) ||
+              (incoming().currency == 'USD' && incoming().amount == 33) ||
+              (incoming().currency == 'USDT' && incoming().amount == 33)
+            )
+          ) ||
+          (
+            incoming().type == 'VERIFIED' &&
+            incoming().durationDays == 365 &&
+            incoming().planName == '12 Months' &&
+            (
+              (incoming().currency == 'PKR' && incoming().amount == 14999) ||
+              (incoming().currency == 'USD' && incoming().amount == 55) ||
+              (incoming().currency == 'USDT' && incoming().amount == 55)
+            )
+          )
+        );
       allow update: if isSuper() || (
         isAdmin() && (
           // Prohibit resetting isActivated or resumeConsumed from true to false
@@ -411,15 +528,49 @@ service cloud.firestore {
     }
 
     match /credit_applications/{applicationId} {
-      allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isSignedIn() && incoming().userId == request.auth.uid &&
+      allow read: if isSuper() || isPaymentVerifier() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                    incoming().userId == request.auth.uid &&
                     (!('status' in incoming()) || incoming().status == 'PENDING') &&
                     !('approvedAt' in incoming()) &&
                     !('approvedBy' in incoming()) &&
                     !('rejectedAt' in incoming()) &&
-                    !('rejectedBy' in incoming());
-      allow update: if isSuper() || isAdmin() || isPaymentVerifier();
-      allow delete: if isSuper() || isAdmin();
+                    !('rejectedBy' in incoming()) &&
+                    !('refundRequested' in incoming()) &&
+                    !('refundRequestedAt' in incoming()) &&
+                    !('refundStatus' in incoming()) &&
+                    !('refundCalculatedAmount' in incoming()) &&
+                    !('refundApprovedAt' in incoming()) &&
+                    !('refundApprovedBy' in incoming()) &&
+                    // Authoritative Package Whitelist & Value Integrity Invariants
+                    (
+                      (
+                        incoming().packageId == 'starter_pack' &&
+                        incoming().packageName == 'Starter Pack' &&
+                        incoming().credits == 10 &&
+                        incoming().usdPrice == 1.00
+                      ) ||
+                      (
+                        incoming().packageId == 'pro_pack' &&
+                        incoming().packageName == 'Pro Trader Pack' &&
+                        incoming().credits == 50 &&
+                        incoming().usdPrice == 5.00
+                      ) ||
+                      (
+                        incoming().packageId == 'power_pack' &&
+                        incoming().packageName == 'Power Bidder Pack' &&
+                        incoming().credits == 100 &&
+                        incoming().usdPrice == 10.00
+                      ) ||
+                      (
+                        incoming().packageId == 'vip_pack' &&
+                        incoming().packageName == 'VIP Commander Pack' &&
+                        incoming().credits == 250 &&
+                        incoming().usdPrice == 25.00
+                      )
+                    );
+      allow update: if isSuper();
+      allow delete: if isSuper();
     }
 
     match /users/{userId} {
@@ -505,9 +656,22 @@ service cloud.firestore {
                       ]) &&
                       incoming().isSystemAccount == true
                     ) || (
-                      // Action: Activity tracking (allow others to increment stats)
+                      // Action: Activity tracking (allow non-blocked authenticated users to increment stats within strict bounds)
+                      isSignedIn() && isNotBlocked() &&
                       incoming().diff(existing()).affectedKeys().hasAny(['sellerScore', 'totalViews', 'totalSaves', 'totalShares', 'trustRanking', 'updatedAt']) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['sellerScore', 'totalViews', 'totalSaves', 'totalShares', 'trustRanking', 'updatedAt'])
+                      incoming().diff(existing()).affectedKeys().hasOnly(['sellerScore', 'totalViews', 'totalSaves', 'totalShares', 'trustRanking', 'updatedAt']) &&
+                      incoming().updatedAt == request.time &&
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['totalViews']) || incoming().get('totalViews', 0) == existing().get('totalViews', 0) + 1) &&
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['totalSaves']) || incoming().get('totalSaves', 0) == existing().get('totalSaves', 0) + 1) &&
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['totalShares']) || incoming().get('totalShares', 0) == existing().get('totalShares', 0) + 1) &&
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['sellerScore']) || (
+                        incoming().get('sellerScore', 0) > existing().get('sellerScore', 0) &&
+                        incoming().get('sellerScore', 0) <= existing().get('sellerScore', 0) + 10
+                      )) &&
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['trustRanking']) || (
+                        incoming().get('trustRanking', 0) >= existing().get('trustRanking', 0) &&
+                        incoming().get('trustRanking', 0) <= existing().get('trustRanking', 0) + 1
+                      ))
                     );
 
       allow delete: if isSuper();
@@ -519,11 +683,7 @@ service cloud.firestore {
 
       match /notifications/{notificationId} {
         allow read: if isSignedIn() && (userId == request.auth.uid || isAdmin());
-        allow create: if isAdmin() || (
-          isSignedIn() && isNotBlocked() &&
-          userId == request.auth.uid &&
-          !(incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE'])
-        );
+        allow create: if isAdmin();
         allow update: if isSignedIn() && (userId == request.auth.uid || isAdmin())
                       && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read']);
         allow delete: if isSignedIn() && (userId == request.auth.uid || isAdmin());
@@ -788,12 +948,7 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());
       allow create: if isAdmin() || (
-        isSignedIn() && isNotBlocked() &&
-        !(incoming().get('type', '') in [
-          'CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED',
-          'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT',
-          'ADMIN_NOTICE', 'PRICE_DROP', 'OFFER_RECEIVED'
-        ]) && (
+        isSignedIn() && isNotBlocked() && (
           // Branch A: SELF notifications
           (
             incoming().get('userId', '') == request.auth.uid &&
@@ -994,15 +1149,51 @@ service cloud.firestore {
     }
 
     match /cities/{cityId} {
+      function isValidNewCity() {
+        return isSignedIn() &&
+          isNotBlocked() &&
+          !exists(/databases/$(database)/documents/cities/$(cityId)) &&
+          cityId is string &&
+          cityId.size() >= 2 &&
+          cityId.size() <= 64 &&
+          incoming().keys().hasAll(['name']) &&
+          incoming().keys().hasOnly(['name', 'createdAt']) &&
+          incoming().name is string &&
+          incoming().name.size() >= 2 &&
+          incoming().name.size() <= 64 &&
+          cityId == incoming().name.lower() &&
+          (!('createdAt' in incoming()) || incoming().createdAt == request.time);
+      }
+
       allow read: if true;
-      allow create, update: if isSignedIn();
+      allow create: if isAdmin() || isValidNewCity();
+      allow update, delete: if isAdmin();
     }
 
     match /verification_applications/{applicationId} {
       allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && (resource == null || resource.data.userId == request.auth.uid));
       allow create: if isSignedIn() && incoming().userId == request.auth.uid &&
+                    (!('status' in incoming()) || incoming().status == 'PENDING') &&
                     !('receivedAmount' in incoming()) &&
-                    (!('verificationStage' in incoming()) || incoming().verificationStage == 'NONE');
+                    (!('verificationStage' in incoming()) || incoming().verificationStage == 'NONE') &&
+                    !('approvedAt' in incoming()) &&
+                    !('approvedBy' in incoming()) &&
+                    !('paymentVerifiedBy' in incoming()) &&
+                    !('paymentVerifiedByUid' in incoming()) &&
+                    !('paymentVerifiedAt' in incoming()) &&
+                    !('rejectedAt' in incoming()) &&
+                    !('rejectedBy' in incoming()) &&
+                    !('refundApprovedAt' in incoming()) &&
+                    !('refundApprovedBy' in incoming()) &&
+                    !('refundCalculatedAmount' in incoming()) &&
+                    !('isVerified' in incoming()) &&
+                    !('isPremiumVerified' in incoming()) &&
+                    !('verifiedBadgeType' in incoming()) &&
+                    !('verifiedUntil' in incoming()) &&
+                    (
+                      ('durationDays' in incoming()) &&
+                      incoming().durationDays in [30, 90, 180, 365]
+                    );
       allow update: if isSuper() || (
         isAdmin() &&
         !(existing().get('refundStatus', '') == 'REFUNDED' && incoming().get('refundStatus', '') != 'REFUNDED') &&
@@ -1010,6 +1201,14 @@ service cloud.firestore {
           incoming().get('refundStatus', '') != 'REFUNDED' ||
           existing().get('refundStatus', '') == 'VERIFIER_APPROVED' ||
           existing().get('refundStatus', '') == 'REFUNDED'
+        ) &&
+        // Payment Verification Gate: Cannot transition to APPROVED unless payment is verified and receivedAmount > 0
+        (
+          incoming().status != 'APPROVED' ||
+          (
+            (existing().get('verificationStage', '') == 'PAYMENT_VERIFIED' || existing().get('verificationStage', '') == 'VERIFIED') &&
+            existing().get('receivedAmount', 0) > 0
+          )
         )
       ) || (
         isPaymentVerifier() &&
@@ -1530,14 +1729,82 @@ service cloud.firestore {
     }
 
     match /arena_risk_scores/{scoreId} {
-      allow read: if isAdmin() || (isSignedIn() && resource.data.get('userId', '') == request.auth.uid);
-      allow create, update: if isSignedIn();
+      allow read: if isAdmin() || (
+        isSignedIn() &&
+        (
+          resource.data.get('userId', '') == request.auth.uid ||
+          resource.data.get('targetId', '') == request.auth.uid
+        )
+      );
+      allow create: if isNotBlocked() && (
+        isAdmin() || (
+          isSignedIn() &&
+          incoming().targetId == scoreId &&
+          incoming().targetId is string &&
+          incoming().targetId.size() > 0 &&
+          incoming().targetId.size() <= 128 &&
+          incoming().targetType in ['user', 'listing', 'negotiation'] &&
+          incoming().score == 1 &&
+          incoming().lastReportedAt == request.time &&
+          incoming().keys().hasOnly(['targetId', 'targetType', 'score', 'lastReportedAt']) &&
+          exists(/databases/$(database)/documents/arena_reports/$(request.auth.uid + '_' + scoreId))
+        )
+      );
+      allow update: if isNotBlocked() && (
+        isAdmin() || (
+          isSignedIn() &&
+          incoming().score == existing().score + 1 &&
+          incoming().lastReportedAt == request.time &&
+          incoming().targetId == existing().targetId &&
+          incoming().targetType == existing().targetType &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['score', 'lastReportedAt']) &&
+          exists(/databases/$(database)/documents/arena_reports/$(request.auth.uid + '_' + scoreId))
+        )
+      );
       allow delete: if isAdmin();
     }
 
     match /arena_audit_logs/{logId} {
+      function isLegitimateSellerRemovalAudit() {
+        return isSignedIn() &&
+          isNotBlocked() &&
+          incoming().userId == request.auth.uid &&
+          !('moderatorId' in incoming()) &&
+          incoming().action == 'REMOVE_LISTING' &&
+          incoming().targetType == 'auction' &&
+          incoming().targetId is string &&
+          incoming().targetId.size() > 0 &&
+          incoming().targetId.size() <= 128 &&
+          incoming().timestamp == request.time &&
+          incoming().createdAt == request.time &&
+          incoming().keys().hasAll(['userId', 'action', 'targetType', 'targetId', 'timestamp', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'action', 'targetType', 'targetId', 'previousState', 'newState', 'reason', 'metadata', 'timestamp', 'createdAt']) &&
+          (!('previousState' in incoming()) || (incoming().previousState is string && incoming().previousState.size() <= 128)) &&
+          (!('newState' in incoming()) || (incoming().newState is string && incoming().newState.size() <= 128)) &&
+          (!('reason' in incoming()) || (incoming().reason is string && incoming().reason.size() <= 500)) &&
+          (
+            !('metadata' in incoming()) ||
+            (
+              incoming().metadata is map &&
+              incoming().metadata.keys().hasOnly(['auctionId', 'removedBy']) &&
+              incoming().metadata.get('removedBy', request.auth.uid) == request.auth.uid &&
+              incoming().metadata.get('auctionId', incoming().targetId) == incoming().targetId
+            )
+          ) &&
+          exists(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)) &&
+          (
+            get(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)).data.sellerId == request.auth.uid ||
+            get(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)).data.get('userId', '') == request.auth.uid ||
+            get(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)).data.get('ownerId', '') == request.auth.uid ||
+            (
+              exists(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)/private/seller) &&
+              get(/databases/$(database)/documents/arena_auctions/$(incoming().targetId)/private/seller).data.sellerUid == request.auth.uid
+            )
+          );
+      }
+
       allow read: if isAdmin();
-      allow create: if isAdmin() || (isSignedIn() && (incoming().get('userId', '') == request.auth.uid || incoming().get('moderatorId', '') == request.auth.uid));
+      allow create: if isAdmin() || isLegitimateSellerRemovalAudit();
       allow update, delete: if isAdmin();
     }
 

@@ -356,13 +356,19 @@ export class CreditsService {
           throw new Error('ALREADY_APPROVED');
         }
 
-        // Authoritative data resolution from application document & package definitions
+        // Authoritative data resolution strictly from verified package definitions
         targetUserId = appData?.userId || userId;
-        targetPackageName = appData?.packageName || packageName;
-        targetUsdPrice = typeof appData?.usdPrice === 'number' ? appData.usdPrice : usdPrice;
 
-        const packMatch = CREDIT_PACKAGES.find((p) => p.id === (appData?.packageId || packageId));
-        grantedCreditsAmount = packMatch ? packMatch.credits : (appData?.credits || creditsAmount);
+        const resolvedPackageId = appData?.packageId || packageId;
+        const packMatch = CREDIT_PACKAGES.find((p) => p.id === resolvedPackageId);
+        if (!packMatch) {
+          throw new Error(`Unauthorized or unknown credit package: ${resolvedPackageId}`);
+        }
+
+        // Authoritative values strictly sourced from verified catalog (disallowing client-submitted overrides)
+        grantedCreditsAmount = packMatch.credits;
+        targetPackageName = packMatch.name;
+        targetUsdPrice = packMatch.usdPrice;
 
         if (!targetUserId || grantedCreditsAmount <= 0) {
           throw new Error('Invalid user or credit amount on application.');

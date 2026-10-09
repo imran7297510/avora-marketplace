@@ -213,10 +213,10 @@ export function runSupportTicketSecurityUnitTests(): void {
     updatedAt: BASE_TIME,
   };
 
-  // --- CREATION TESTS ---
+  // --- CREATE TESTS (1-12) ---
 
-  // 1. Authenticated user creates ticket with own UID -> ALLOW
-  runTest('TEST 1: authenticated user creates ticket with own UID -> ALLOW', () => {
+  // 1. authenticated user creates own ticket -> ALLOW
+  runTest('TEST 1: authenticated user creates own ticket -> ALLOW', () => {
     const res = evaluateSupportTicketCreateRule(
       validCreationPayload,
       { uid: 'user_lahore_101' },
@@ -225,8 +225,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 2. Authenticated user creates ticket with another user's UID -> DENY (F01)
-  runTest("TEST 2: authenticated user creates ticket with another user's UID -> DENY", () => {
+  // 2. authenticated user creates ticket using victim UID -> DENY (F01)
+  runTest('TEST 2: authenticated user creates ticket using victim UID -> DENY', () => {
     const res = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, userId: 'victim_user_999' },
       { uid: 'attacker_123' },
@@ -236,8 +236,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'USER_ID_MISMATCH');
   });
 
-  // 3. Unauthenticated creation -> DENY
-  runTest('TEST 3: unauthenticated creation -> DENY', () => {
+  // 3. unauthenticated create -> DENY
+  runTest('TEST 3: unauthenticated create -> DENY', () => {
     const res = evaluateSupportTicketCreateRule(
       validCreationPayload,
       { uid: null },
@@ -247,41 +247,32 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'UNAUTHENTICATED');
   });
 
-  // 4. Ordinary user creates ticket with RESOLVED status -> DENY
-  runTest('TEST 4: ordinary user creates ticket with RESOLVED status -> DENY', () => {
-    const res = evaluateSupportTicketCreateRule(
+  // 4. ordinary user creates non-PENDING ticket -> DENY
+  runTest('TEST 4: ordinary user creates non-PENDING ticket (RESOLVED / IN_PROGRESS / CLOSED) -> DENY', () => {
+    const resResolved = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, status: 'RESOLVED' },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res.allowed, false);
-    assert.strictEqual(res.reason, 'STATUS_MUST_BE_PENDING');
-  });
+    assert.strictEqual(resResolved.allowed, false);
 
-  // 5. Ordinary user creates ticket with CLOSED status -> DENY
-  runTest('TEST 5: ordinary user creates ticket with CLOSED status -> DENY', () => {
-    const res = evaluateSupportTicketCreateRule(
-      { ...validCreationPayload, status: 'CLOSED' },
-      { uid: 'user_lahore_101' },
-      BASE_TIME
-    );
-    assert.strictEqual(res.allowed, false);
-    assert.strictEqual(res.reason, 'STATUS_MUST_BE_PENDING');
-  });
-
-  // 6. Ordinary user creates ticket with IN_PROGRESS status -> DENY
-  runTest('TEST 6: ordinary user creates ticket with IN_PROGRESS status -> DENY', () => {
-    const res = evaluateSupportTicketCreateRule(
+    const resInProgress = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, status: 'IN_PROGRESS' },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res.allowed, false);
-    assert.strictEqual(res.reason, 'STATUS_MUST_BE_PENDING');
+    assert.strictEqual(resInProgress.allowed, false);
+
+    const resClosed = evaluateSupportTicketCreateRule(
+      { ...validCreationPayload, status: 'CLOSED' },
+      { uid: 'user_lahore_101' },
+      BASE_TIME
+    );
+    assert.strictEqual(resClosed.allowed, false);
   });
 
-  // 7. Legitimate PENDING creation -> ALLOW
-  runTest('TEST 7: legitimate PENDING creation -> ALLOW', () => {
+  // 5. legitimate PENDING creation -> ALLOW
+  runTest('TEST 5: legitimate PENDING creation -> ALLOW', () => {
     const res = evaluateSupportTicketCreateRule(
       validCreationPayload,
       { uid: 'user_lahore_101' },
@@ -290,8 +281,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 8. Forged createdAt -> DENY
-  runTest('TEST 8: forged createdAt -> DENY', () => {
+  // 6. forged/static createdAt -> DENY
+  runTest('TEST 6: forged/static createdAt -> DENY', () => {
     const res = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, createdAt: BASE_TIME - 86400000 },
       { uid: 'user_lahore_101' },
@@ -301,8 +292,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'CREATED_AT_MUST_BE_REQUEST_TIME');
   });
 
-  // 9. Legitimate serverTimestamp creation -> ALLOW
-  runTest('TEST 9: legitimate serverTimestamp creation -> ALLOW', () => {
+  // 7. legitimate serverTimestamp createdAt -> ALLOW
+  runTest('TEST 7: legitimate serverTimestamp createdAt -> ALLOW', () => {
     const res = evaluateSupportTicketCreateRule(
       validCreationPayload,
       { uid: 'user_lahore_101' },
@@ -311,41 +302,65 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 10. Admin-field injection at creation -> DENY
-  runTest('TEST 10: admin-field injection at creation (adminReply, repliedBy, resolvedAt, assignedTo) -> DENY', () => {
-    const res1 = evaluateSupportTicketCreateRule(
+  // 8. forged adminReply -> DENY
+  runTest('TEST 8: forged adminReply on create -> DENY', () => {
+    const res = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, adminReply: 'Refund granted' },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res1.allowed, false);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.reason, 'ADMIN_REPLY_FORBIDDEN_ON_CREATE');
+  });
 
-    const res2 = evaluateSupportTicketCreateRule(
+  // 9. forged repliedBy -> DENY
+  runTest('TEST 9: forged repliedBy on create -> DENY', () => {
+    const res = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, repliedBy: 'admin@domain.com' },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res2.allowed, false);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.reason, 'REPLIED_BY_FORBIDDEN_ON_CREATE');
+  });
 
-    const res3 = evaluateSupportTicketCreateRule(
+  // 10. forged repliedAt -> DENY
+  runTest('TEST 10: forged repliedAt on create -> DENY', () => {
+    const res = evaluateSupportTicketCreateRule(
+      { ...validCreationPayload, repliedAt: BASE_TIME },
+      { uid: 'user_lahore_101' },
+      BASE_TIME
+    );
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.reason, 'REPLIED_AT_FORBIDDEN_ON_CREATE');
+  });
+
+  // 11. forged resolvedAt -> DENY
+  runTest('TEST 11: forged resolvedAt on create -> DENY', () => {
+    const res = evaluateSupportTicketCreateRule(
       { ...validCreationPayload, resolvedAt: BASE_TIME },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res3.allowed, false);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.reason, 'RESOLVED_AT_FORBIDDEN_ON_CREATE');
+  });
 
-    const res4 = evaluateSupportTicketCreateRule(
-      { ...validCreationPayload, assignedTo: 'admin_1' },
+  // 12. forged assignedTo -> DENY
+  runTest('TEST 12: forged assignedTo on create -> DENY', () => {
+    const res = evaluateSupportTicketCreateRule(
+      { ...validCreationPayload, assignedTo: 'admin_agent_01' },
       { uid: 'user_lahore_101' },
       BASE_TIME
     );
-    assert.strictEqual(res4.allowed, false);
+    assert.strictEqual(res.allowed, false);
+    assert.strictEqual(res.reason, 'ASSIGNED_TO_FORBIDDEN_ON_CREATE');
   });
 
-  // --- UPDATE TESTS (F02) ---
+  // --- ORDINARY USER UPDATE TESTS (13-21) ---
 
-  // 11. Ordinary creator changes userId -> DENY
-  runTest('TEST 11: ordinary creator changes userId -> DENY', () => {
+  // 13. change userId -> DENY
+  runTest('TEST 13: ordinary user change userId -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { userId: 'victim_user_999' },
@@ -356,8 +371,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 12. Ordinary creator changes status -> DENY
-  runTest('TEST 12: ordinary creator changes status -> DENY', () => {
+  // 14. change status -> DENY
+  runTest('TEST 14: ordinary user change status -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { status: 'RESOLVED' },
@@ -368,8 +383,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 13. Ordinary creator changes adminReply -> DENY
-  runTest('TEST 13: ordinary creator changes adminReply -> DENY', () => {
+  // 15. change adminReply -> DENY
+  runTest('TEST 15: ordinary user change adminReply -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { adminReply: 'Fake resolution from staff' },
@@ -380,8 +395,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 14. Ordinary creator changes repliedBy -> DENY
-  runTest('TEST 14: ordinary creator changes repliedBy -> DENY', () => {
+  // 16. change repliedBy -> DENY
+  runTest('TEST 16: ordinary user change repliedBy -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { repliedBy: 'admin@platform.com' },
@@ -392,8 +407,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 15. Ordinary creator changes repliedAt -> DENY
-  runTest('TEST 15: ordinary creator changes repliedAt -> DENY', () => {
+  // 17. change repliedAt -> DENY
+  runTest('TEST 17: ordinary user change repliedAt -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { repliedAt: BASE_TIME + 1000 },
@@ -404,8 +419,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 16. Ordinary creator changes resolvedAt -> DENY
-  runTest('TEST 16: ordinary creator changes resolvedAt -> DENY', () => {
+  // 18. change resolvedAt -> DENY
+  runTest('TEST 18: ordinary user change resolvedAt -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { resolvedAt: BASE_TIME + 1000 },
@@ -416,8 +431,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 17. Ordinary creator changes assignedTo -> DENY
-  runTest('TEST 17: ordinary creator changes assignedTo -> DENY', () => {
+  // 19. change assignedTo -> DENY
+  runTest('TEST 19: ordinary user change assignedTo -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { assignedTo: 'admin_agent_01' },
@@ -428,8 +443,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 18. Ordinary creator changes createdAt -> DENY
-  runTest('TEST 18: ordinary creator changes createdAt -> DENY', () => {
+  // 20. change createdAt -> DENY
+  runTest('TEST 20: ordinary user change createdAt -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { createdAt: BASE_TIME - 10000 },
@@ -440,8 +455,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // 19. Ordinary creator changes updatedAt to arbitrary value -> DENY
-  runTest('TEST 19: ordinary creator changes updatedAt to arbitrary value -> DENY', () => {
+  // 21. change updatedAt if not legitimately permitted -> DENY
+  runTest('TEST 21: ordinary user change updatedAt if not legitimately permitted -> DENY', () => {
     const res = evaluateSupportTicketUpdateRule(
       existingTicket,
       { updatedAt: BASE_TIME + 999999 },
@@ -452,10 +467,10 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'ORDINARY_USER_UPDATE_DENIED');
   });
 
-  // --- ADMIN OPERATIONS ---
+  // --- ADMIN TESTS (22-24) ---
 
-  // 20. Admin can perform legitimate reply update (Admin.tsx handleAdminReply) -> ALLOW
-  runTest('TEST 20: admin can perform legitimate reply update (handleAdminReply) -> ALLOW', () => {
+  // 22. admin reply -> ALLOW
+  runTest('TEST 22: admin reply (handleAdminReply payload) -> ALLOW', () => {
     const adminReplyPayload: Partial<SupportTicketDoc> = {
       adminReply: 'We are investigating this with the courier.',
       status: 'IN_PROGRESS',
@@ -471,8 +486,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 21. Admin can perform legitimate resolve update (Admin.tsx solveTicket) -> ALLOW
-  runTest('TEST 21: admin can perform legitimate resolve update (solveTicket) -> ALLOW', () => {
+  // 23. admin resolve -> ALLOW
+  runTest('TEST 23: admin resolve (solveTicket payload) -> ALLOW', () => {
     const adminSolvePayload: Partial<SupportTicketDoc> = {
       status: 'RESOLVED',
       resolvedAt: BASE_TIME + 10000,
@@ -487,23 +502,16 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 22. Admin can delete ticket -> ALLOW
-  runTest('TEST 22: admin can delete ticket -> ALLOW', () => {
+  // 24. admin delete -> ALLOW
+  runTest('TEST 24: admin delete -> ALLOW', () => {
     const res = evaluateSupportTicketDeleteRule({ uid: 'admin_uid_999', isAdmin: true });
     assert.strictEqual(res.allowed, true);
   });
 
-  // 23. Ordinary user cannot delete ticket -> DENY
-  runTest('TEST 23: ordinary user cannot delete ticket -> DENY', () => {
-    const res = evaluateSupportTicketDeleteRule({ uid: 'user_lahore_101', isAdmin: false });
-    assert.strictEqual(res.allowed, false);
-    assert.strictEqual(res.reason, 'ORDINARY_USER_DELETE_DENIED');
-  });
+  // --- READ TESTS (25-27) ---
 
-  // --- READ TESTS ---
-
-  // 24. Ticket owner can read own ticket -> ALLOW
-  runTest('TEST 24: ticket owner can read own ticket -> ALLOW', () => {
+  // 25. owner read -> ALLOW
+  runTest('TEST 25: owner read -> ALLOW', () => {
     const res = evaluateSupportTicketReadRule(
       existingTicket,
       { uid: 'user_lahore_101' }
@@ -511,8 +519,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 25. Different authenticated user cannot read ticket -> DENY
-  runTest('TEST 25: different authenticated user cannot read ticket -> DENY', () => {
+  // 26. different ordinary user read -> DENY
+  runTest('TEST 26: different ordinary user read -> DENY', () => {
     const res = evaluateSupportTicketReadRule(
       existingTicket,
       { uid: 'snooper_user_888' }
@@ -521,8 +529,8 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.reason, 'CROSS_USER_READ_DENIED');
   });
 
-  // 26. Admin can read ticket -> ALLOW
-  runTest('TEST 26: admin can read ticket -> ALLOW', () => {
+  // 27. admin read -> ALLOW
+  runTest('TEST 27: admin read -> ALLOW', () => {
     const res = evaluateSupportTicketReadRule(
       existingTicket,
       { uid: 'admin_uid_999', isAdmin: true }
@@ -530,13 +538,19 @@ export function runSupportTicketSecurityUnitTests(): void {
     assert.strictEqual(res.allowed, true);
   });
 
-  // 27. Broad wildcard cannot bypass support-ticket authorization
-  runTest('TEST 27: global fallback / catchall preserves default denial without bypass', () => {
+  // --- OVERLAP TEST (28) ---
+
+  // 28. verify no wildcard rule bypasses supportTickets restrictions
+  runTest('TEST 28: verify no wildcard rule bypasses supportTickets restrictions', () => {
     const unauthRead = evaluateSupportTicketReadRule(existingTicket, { uid: null });
     assert.strictEqual(unauthRead.allowed, false);
 
     const unauthDelete = evaluateSupportTicketDeleteRule({ uid: null });
     assert.strictEqual(unauthDelete.allowed, false);
+
+    const ordinaryUserDelete = evaluateSupportTicketDeleteRule({ uid: 'user_lahore_101', isAdmin: false });
+    assert.strictEqual(ordinaryUserDelete.allowed, false);
+    assert.strictEqual(ordinaryUserDelete.reason, 'ORDINARY_USER_DELETE_DENIED');
   });
 
   console.log(`=== SUPPORT TICKET SECURITY TEST SUMMARY: ${passed} PASSED, ${failed} FAILED ===`);

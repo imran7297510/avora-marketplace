@@ -356,7 +356,13 @@ export function calculateRefundAmounts(receivedAmount: number | undefined | null
   refundPercentage: number;
   retentionPercentage: number;
 } {
-  const base = Math.max(0, Number(receivedAmount) || 0);
+  const parsed =
+    typeof receivedAmount === 'number'
+      ? receivedAmount
+      : typeof receivedAmount === 'string'
+      ? Number(receivedAmount)
+      : 0;
+  const base = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
   if (base <= 0) {
     return {
       refundAmount: 0,

@@ -1763,15 +1763,10 @@ export function BadgeActivities({ user, defaultCategory, lockedCategory, default
 
     try {
       setUpdating(true);
-      const { refundAmount, retentionAmount, refundPercentage, retentionPercentage } = calculateRefundAmounts(req.receivedAmount);
       await updateDoc(doc(db, 'promotionRequests', req.id), {
         refundRequested: true,
         refundRequestedAt: serverTimestamp(),
         refundStatus: 'PENDING',
-        refundCalculatedAmount: refundAmount,
-        refundRetentionAmount: retentionAmount,
-        refundPercentage: refundPercentage,
-        refundRetentionPercentage: retentionPercentage,
         refundName: name.trim(),
         refundBankName: bank.trim(),
         refundAccountNumber: acct.trim(),
@@ -1779,24 +1774,6 @@ export function BadgeActivities({ user, defaultCategory, lockedCategory, default
         refundProofImage: refundProofImages[0] || "",
         updatedAt: serverTimestamp()
       });
-
-      try {
-        const adminsQuery = query(collection(db, 'users'), where('isAdmin', '==', true));
-        const adminSnap = await getDocs(adminsQuery);
-        for (const adminDoc of adminSnap.docs) {
-          const notifAdminRef = doc(collection(db, "notifications"));
-          await setDoc(notifAdminRef, {
-            id: notifAdminRef.id,
-            userId: adminDoc.id,
-            title: "💸 User Refund Request Submitted",
-            message: `A 95% refund of ${formatPrice(refundAmount, req.currency)} (5% retention: ${formatPrice(retentionAmount, req.currency)}) has been claimed for badge "${req.planName}" with ${refundProofImages.length} attached payment proof(s). Please check it in the PROMO panel under Admin Dashboard.`,
-            read: false,
-            createdAt: serverTimestamp(),
-          });
-        }
-      } catch (adminNotifErr) {
-        console.warn("Could not dispatch admin notifications:", adminNotifErr);
-      }
 
       alert("Refund request submitted successfully! Your paid money will be refunded within 7 working days.");
       setInlineRefundId(null);
@@ -2298,40 +2275,16 @@ export function BadgeActivities({ user, defaultCategory, lockedCategory, default
     }
 
     try {
-      const { refundAmount, retentionAmount, refundPercentage, retentionPercentage } = calculateRefundAmounts(req.receivedAmount);
       await updateDoc(doc(db, 'promotionRequests', req.id), {
         refundRequested: true,
         refundRequestedAt: serverTimestamp(),
         refundStatus: 'PENDING',
-        refundCalculatedAmount: refundAmount,
-        refundRetentionAmount: retentionAmount,
-        refundPercentage: refundPercentage,
-        refundRetentionPercentage: retentionPercentage,
         refundName: refundName.trim(),
         refundBankName: refundBankName.trim(),
         refundAccountNumber: refundAccountNumber.trim(),
         updatedAt: serverTimestamp()
       });
 
-      // Retrieve admin users and notify them
-      try {
-        const adminsQuery = query(collection(db, 'users'), where('isAdmin', '==', true));
-        const adminSnap = await getDocs(adminsQuery);
-        for (const adminDoc of adminSnap.docs) {
-          const notifAdminRef = doc(collection(db, "notifications"));
-          await setDoc(notifAdminRef, {
-            id: notifAdminRef.id,
-            userId: adminDoc.id,
-            title: "💸 User Refund Request Submitted",
-            message: `A 95% refund of ${formatPrice(refundAmount, req.currency)} (5% retention: ${formatPrice(retentionAmount, req.currency)}) has been claimed for badge "${req.planName}" (APP trace ID: ${(req as any).applicationId || req.id.substring(0, 8)}). Please check it in the PROMO panel under Admin Dashboard.`,
-            read: false,
-            createdAt: serverTimestamp(),
-          });
-        }
-      } catch (adminNotifErr) {
-        console.warn("Could not dispatch admin notifications:", adminNotifErr);
-      }
-
       alert("Refund request submitted successfully! Your paid money will be refunded within 7 working days.");
       setConfirmingRefundFor(null);
       fetchActivities();
@@ -2339,60 +2292,6 @@ export function BadgeActivities({ user, defaultCategory, lockedCategory, default
       console.error("Refund request error:", err);
       alert(`Failed to file refund request. Please try again. Error: ${err.message || err}`);
       setConfirmingRefundFor(null);
-    }
-  };
-
-  const confirmRefundActionInline = async (req: PromotionRequest, name: string, bank: string, acct: string) => {
-    const check = checkRefundEligibility(req, user?.uid);
-    if (!check.eligible) {
-      alert(check.reason);
-      return;
-    }
-
-    if (!name.trim() || !bank.trim() || !acct.trim()) {
-      alert("Please fill in all refund details (Complete Name, Bank Name, and Account Number).");
-      return;
-    }
-
-    try {
-      setUpdating(true);
-      const { refundAmount, retentionAmount } = calculateRefundAmounts(req.receivedAmount);
-      await updateDoc(doc(db, 'promotionRequests', req.id), {
-        refundRequested: true,
-        refundRequestedAt: serverTimestamp(),
-        refundStatus: 'PENDING',
-        refundName: name.trim(),
-        refundBankName: bank.trim(),
-        refundAccountNumber: acct.trim(),
-        updatedAt: serverTimestamp()
-      });
-
-      try {
-        const adminsQuery = query(collection(db, 'users'), where('isAdmin', '==', true));
-        const adminSnap = await getDocs(adminsQuery);
-        for (const adminDoc of adminSnap.docs) {
-          const notifAdminRef = doc(collection(db, "notifications"));
-          await setDoc(notifAdminRef, {
-            id: notifAdminRef.id,
-            userId: adminDoc.id,
-            title: "💸 User Refund Request Submitted",
-            message: `A 95% refund of ${formatPrice(refundAmount, req.currency)} (5% retention: ${formatPrice(retentionAmount, req.currency)}) has been claimed for badge "${req.planName}" (APP trace ID: ${(req as any).applicationId || req.id.substring(0, 8)}). Please check it in the PROMO panel under Admin Dashboard.`,
-            read: false,
-            createdAt: serverTimestamp(),
-          });
-        }
-      } catch (adminNotifErr) {
-        console.warn("Could not dispatch admin notifications:", adminNotifErr);
-      }
-
-      alert("Refund request submitted successfully! Your paid money will be refunded within 7 working days.");
-      setInlineRefundId(null);
-      fetchActivities();
-    } catch (err: any) {
-      console.error("Refund request error:", err);
-      alert(`Failed to file refund request. Please try again. Error: ${err.message || err}`);
-    } finally {
-      setUpdating(false);
     }
   };
 
