@@ -106,7 +106,19 @@ service cloud.firestore {
       return isSignedIn() && (
         isAdmin() || 
         !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == false &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountStatus', 'active') != 'banned'
+        )
+      );
+    }
+
+    function canSubmitOffers() {
+      return isSignedIn() && (
+        isAdmin() ||
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('offersDisabled', false) == false
       );
     }
 
@@ -885,7 +897,7 @@ service cloud.firestore {
           incoming().get('amount', 0) > 0 &&
           incoming().get('expiresAt', null) != null &&
           incoming().get('expiresAt', request.time) > request.time &&
-          (incoming().get('sellerId', '') == request.auth.uid || incoming().get('buyerId', '') == request.auth.uid) &&
+          incoming().get('sellerId', '') == request.auth.uid &&
           // Verify against the authoritative expired original order
           exists(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))) &&
           get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('status', '') == 'PAYMENT_EXPIRED' &&
@@ -926,10 +938,22 @@ service cloud.firestore {
     }
 
     match /offers/{offerId} {
-      allow create: if isNotBlocked() && (
+      allow read: if isSignedIn() && (
+        resource.data.get('buyerId', '') == request.auth.uid ||
+        resource.data.get('sellerId', '') == request.auth.uid ||
+        isAdmin()
+      );
+      allow create: if isNotBlocked() && canSubmitOffers() && (
         isAdmin() ||
         (
           isSignedIn() &&
+          incoming().keys().hasOnly([
+            'listingId', 'buyerId', 'sellerId', 'status', 'proposedPrice', 'currency', 'createdAt',
+            'buyerName', 'listingTitle', 'listingImage', 'originalPrice', 'notes', 'userType', 'updatedAt', 'currencySymbol'
+          ]) &&
+          incoming().keys().hasAll([
+            'listingId', 'buyerId', 'sellerId', 'status', 'proposedPrice', 'currency', 'createdAt'
+          ]) &&
           incoming().get('buyerId', '') == request.auth.uid &&
           incoming().get('listingId', '') is string &&
           incoming().get('listingId', '').size() > 0 &&
@@ -937,12 +961,23 @@ service cloud.firestore {
           incoming().get('proposedPrice', 0) is number &&
           incoming().get('proposedPrice', 0) > 0 &&
           incoming().get('createdAt', null) == request.time &&
+          (!('updatedAt' in incoming()) || incoming().updatedAt == request.time) &&
+          (!('notes' in incoming()) || (incoming().notes is string && incoming().notes.size() <= 1000)) &&
+          (!('buyerName' in incoming()) || (incoming().buyerName is string && incoming().buyerName.size() <= 150)) &&
+          (!('listingTitle' in incoming()) || (incoming().listingTitle is string && incoming().listingTitle.size() <= 250)) &&
+          (!('listingImage' in incoming()) || incoming().listingImage == null || (incoming().listingImage is string && incoming().listingImage.size() <= 2048)) &&
+          (!('originalPrice' in incoming()) || (incoming().originalPrice is number && incoming().originalPrice >= 0)) &&
+          (!('userType' in incoming()) || incoming().userType in ['buyer']) &&
+          (!('currencySymbol' in incoming()) || (incoming().currencySymbol is string && incoming().currencySymbol.size() <= 10)) &&
           exists(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))) &&
           get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('status', '') == 'LIVE' &&
           incoming().get('sellerId', '') == get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('ownerId', '') &&
-          incoming().get('buyerId', '') != incoming().get('sellerId', '')
+          incoming().get('buyerId', '') != incoming().get('sellerId', '') &&
+          incoming().get('currency', '') == get(/databases/$(database)/documents/listings/$(incoming().get('listingId', ''))).data.get('currency', 'PKR')
         )
       );
+      allow update: if false;
+      allow delete: if isAdmin();
     }
 
     match /notifications/{notificationId} {
@@ -1686,12 +1721,25 @@ service cloud.firestore {
           isValidOfferSender(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data) &&
           incoming().get('negotiationId', '') == negotiationId &&
           incoming().get('action', '') in ['send', 'counter', 'accept', 'decline', 'withdraw', 'cancel', 'complete', 'request_contact', 'share_contact', 'message'] &&
+          (!(incoming().get('action', '') in ['send', 'counter']) || canSubmitOffers()) &&
+          (!('amount' in incoming()) || (incoming().get('amount', 0) is number && incoming().get('amount', 0) >= 0)) &&
+          (!(incoming().get('action', '') in ['send', 'counter']) || incoming().get('amount', 0) > 0) &&
+          (!(incoming().get('action', '') in ['send', 'counter']) || !(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data.get('status', '') in ['concluded', 'completed', 'withdrawn', 'cancelled', 'expired'])) &&
           (incoming().get('action', '') != 'share_contact' || isNegotiationSeller(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data)) &&
           (incoming().get('action', '') != 'request_contact' || get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data.get('buyerId', '') == request.auth.uid || isAdmin());
         allow update: if false;
         allow delete: if isAdmin() || (isSignedIn() && (
           !exists(/databases/$(database)/documents/arena_negotiations/$(negotiationId)) ||
-          isNegotiationParticipant(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data)
+          (
+            isNegotiationParticipant(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data) &&
+            (
+              existing().get('senderId', '') == request.auth.uid ||
+              (
+                isNegotiationSeller(get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data) &&
+                existing().get('senderId', '') == get(/databases/$(database)/documents/arena_negotiations/$(negotiationId)).data.get('sellerId', '')
+              )
+            )
+          )
         ));
       }
     }
@@ -1713,11 +1761,23 @@ service cloud.firestore {
         allow create: if isNotBlocked() &&
           exists(/databases/$(database)/documents/negotiation_channels/$(channelId)) &&
           isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data) &&
-          incoming().get('senderId', '') == request.auth.uid;
+          isValidOfferSender(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data) &&
+          (!(incoming().get('action', '') in ['send', 'counter']) || canSubmitOffers()) &&
+          (!('amount' in incoming()) || (incoming().get('amount', 0) is number && incoming().get('amount', 0) >= 0)) &&
+          (!(incoming().get('action', '') in ['send', 'counter']) || incoming().get('amount', 0) > 0);
         allow update: if false;
         allow delete: if isAdmin() || (isSignedIn() && (
           !exists(/databases/$(database)/documents/negotiation_channels/$(channelId)) ||
-          isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data)
+          (
+            isNegotiationParticipant(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data) &&
+            (
+              existing().get('senderId', '') == request.auth.uid ||
+              (
+                isNegotiationSeller(get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data) &&
+                existing().get('senderId', '') == get(/databases/$(database)/documents/negotiation_channels/$(channelId)).data.get('sellerId', '')
+              )
+            )
+          )
         ));
       }
     }

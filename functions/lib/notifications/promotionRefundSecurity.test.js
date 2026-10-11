@@ -27,6 +27,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluatePromotionRequestRefundUpdateRule = evaluatePromotionRequestRefundUpdateRule;
 exports.processPromotionRefundTrigger = processPromotionRefundTrigger;
 const assert_1 = __importDefault(require("assert"));
+const promotionRefundTrigger_1 = require("./promotionRefundTrigger");
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Simulates Firestore Rules logic for match /promotionRequests/{requestId} update by normal user.
@@ -114,9 +115,15 @@ function processPromotionRefundTrigger(before, after, adminUids) {
         return { triggered: false, reason: 'SUPPRESSED_NO_TRANSITION' };
     }
     const requestId = after.id || 'promo_test_123';
-    const rawReceived = after.receivedAmount || 0;
-    const refundAmount = Math.round(rawReceived * 0.95);
-    const retentionAmount = Math.max(0, rawReceived - refundAmount);
+    const rawReceived = after.receivedAmount;
+    const parsed = typeof rawReceived === 'number'
+        ? rawReceived
+        : typeof rawReceived === 'string'
+            ? Number(rawReceived)
+            : 0;
+    const base = Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed * 100) / 100 : 0;
+    const refundAmount = base > 0 ? Math.round(base * 0.95 * 100) / 100 : 0;
+    const retentionAmount = base > 0 ? Math.round((base - refundAmount) * 100) / 100 : 0;
     const currency = (after.currency || 'PKR').toUpperCase();
     const currencySymbol = currency === 'USD'
         ? '$'
@@ -169,6 +176,19 @@ function runTest(name, fn) {
     testsRun++;
     try {
         fn();
+        testsPassed++;
+        console.log(`  ✓ [PASS] ${testsRun}. ${name}`);
+    }
+    catch (err) {
+        console.error(`  ✗ [FAIL] ${testsRun}. ${name}`);
+        console.error(err);
+        process.exit(1);
+    }
+}
+async function runAsyncTest(name, fn) {
+    testsRun++;
+    try {
+        await fn();
         testsPassed++;
         console.log(`  ✓ [PASS] ${testsRun}. ${name}`);
     }
@@ -390,5 +410,1036 @@ runTest('Deterministic notification ID follows refund_req_${requestId}_${adminUi
     assert_1.default.strictEqual(notif.rootPath, '/notifications/refund_req_req_xyz_123_admin_alpha');
     assert_1.default.strictEqual(notif.userPath, '/users/admin_alpha/notifications/refund_req_req_xyz_123_admin_alpha');
 });
-console.log(`\nAll ${testsPassed}/${testsRun} Phase 2D tests passed successfully.\n`);
+// Test 13: Financial Precision Verification (Cent-exact 2-decimal rounding)
+runTest('Cloud Function exactly mirrors calculateRefundAmounts 2-decimal precision', () => {
+    const beforeState = { refundRequested: false };
+    const afterState = {
+        id: 'promo_cents_123',
+        receivedAmount: 99.99,
+        currency: 'USD',
+        planName: 'Pro Badge',
+        refundRequested: true,
+        refundStatus: 'PENDING'
+    };
+    const res = processPromotionRefundTrigger(beforeState, afterState, ['admin_omega']);
+    assert_1.default.strictEqual(res.triggered, true);
+    // 99.99 * 0.95 = 94.9905 -> 94.99
+    assert_1.default.strictEqual(res.refundCalculatedAmount, 94.99);
+    // 99.99 - 94.99 = 5.00
+    assert_1.default.strictEqual(res.refundRetentionAmount, 5.0);
+    assert_1.default.strictEqual(res.refundCalculatedAmount + res.refundRetentionAmount, 99.99);
+});
+// Test 14: Broad Admin Recipient Coverage
+runTest('Notification dispatch covers unified admin recipients without duplicates', () => {
+    const legacyAdmins = ['admin_1', 'admin_2'];
+    const superAdmins = ['admin_2', 'super_admin_imran'];
+    const authorizedAdmins = ['admin_3', 'super_admin_imran'];
+    const combinedAdminSet = new Set([...legacyAdmins, ...superAdmins, ...authorizedAdmins]);
+    const adminUids = Array.from(combinedAdminSet);
+    const res = processPromotionRefundTrigger({ refundRequested: false }, { id: 'req_coverage_1', receivedAmount: 1000, refundRequested: true, refundStatus: 'PENDING' }, adminUids);
+    assert_1.default.strictEqual(res.dispatchedNotifications?.length, 4);
+    const notifiedIds = res.dispatchedNotifications.map((n) => n.payload.userId);
+    assert_1.default.deepStrictEqual(notifiedIds.sort(), ['admin_1', 'admin_2', 'admin_3', 'super_admin_imran'].sort());
+});
+// Test 15: Non-finite and malformed monetary inputs produce safe finite zero amounts
+runTest('Non-finite, negative, zero, and malformed monetary inputs produce safe zero amounts without NaN or Infinity', () => {
+    const invalidInputs = [
+        { label: 'NaN', val: NaN },
+        { label: 'Infinity', val: Infinity },
+        { label: '-Infinity', val: -Infinity },
+        { label: 'Negative (-500)', val: -500 },
+        { label: 'Zero (0)', val: 0 },
+        { label: 'String "Infinity"', val: 'Infinity' },
+        { label: 'String "-Infinity"', val: '-Infinity' },
+        { label: 'Malformed string "abc"', val: 'abc' },
+        { label: 'Malformed string "100px"', val: '100px' },
+        { label: 'Undefined', val: undefined },
+        { label: 'Null', val: null }
+    ];
+    for (const input of invalidInputs) {
+        const res = processPromotionRefundTrigger({ refundRequested: false }, { id: 'req_edge', receivedAmount: input.val, refundRequested: true, refundStatus: 'PENDING' }, ['admin_1']);
+        assert_1.default.strictEqual(res.triggered, true);
+        assert_1.default.strictEqual(Number.isFinite(res.refundCalculatedAmount), true, `${input.label} produced non-finite refundCalculatedAmount`);
+        assert_1.default.strictEqual(Number.isFinite(res.refundRetentionAmount), true, `${input.label} produced non-finite refundRetentionAmount`);
+        assert_1.default.strictEqual(res.refundCalculatedAmount, 0, `${input.label} did not produce 0 refund`);
+        assert_1.default.strictEqual(res.refundRetentionAmount, 0, `${input.label} did not produce 0 retention`);
+    }
+});
+// Test 16: Valid positive monetary inputs with decimals produce exact 2-decimal calculations
+runTest('Valid finite numbers with various decimal precision produce safe 2-decimal amounts', () => {
+    const testAmounts = [
+        { input: 1000, expectedRefund: 950, expectedRetention: 50 },
+        { input: 99.99, expectedRefund: 94.99, expectedRetention: 5.0 },
+        { input: 0.05, expectedRefund: 0.05, expectedRetention: 0 },
+        { input: '499', expectedRefund: 474.05, expectedRetention: 24.95 },
+        { input: '899.50', expectedRefund: 854.53, expectedRetention: 44.97 }
+    ];
+    for (const tc of testAmounts) {
+        const res = processPromotionRefundTrigger({ refundRequested: false }, { id: 'req_prec', receivedAmount: tc.input, refundRequested: true, refundStatus: 'PENDING' }, ['admin_1']);
+        assert_1.default.strictEqual(res.triggered, true);
+        assert_1.default.strictEqual(res.refundCalculatedAmount, tc.expectedRefund, `Precision mismatch on refund for ${tc.input}`);
+        assert_1.default.strictEqual(res.refundRetentionAmount, tc.expectedRetention, `Precision mismatch on retention for ${tc.input}`);
+        assert_1.default.strictEqual(Number.isFinite(res.refundCalculatedAmount), true);
+        assert_1.default.strictEqual(Number.isFinite(res.refundRetentionAmount), true);
+    }
+});
+// Test 17: Concurrent execution simulation - atomic create prevents overwriting isRead and createdAt
+// Note: This is a deterministic unit simulation of Firestore's docRef.create() (precondition: exists == false).
+// Genuine Firestore server-side concurrent execution requires the live Firestore service or emulator.
+runTest('Concurrent executions racing to create notifications do not overwrite existing isRead or createdAt', () => {
+    const adminUid = 'admin_super';
+    const requestId = 'promo_race_123';
+    const notifId = `refund_req_${requestId}_${adminUid}`;
+    // Simulated in-memory store for root and user notifications
+    const store = {};
+    const simulateAtomicCreate = (path, payload, currentTime) => {
+        if (store[path]) {
+            const err = new Error(`6 ALREADY_EXISTS: Document already exists at ${path}`);
+            err.code = 6;
+            throw err;
+        }
+        store[path] = { data: { ...payload }, createdAt: currentTime };
+    };
+    // Execution A starts at t=100
+    const payloadA = {
+        id: notifId,
+        userId: adminUid,
+        type: 'REFUND_REQUEST',
+        title: '💸 User Refund Request Submitted',
+        isRead: false,
+        read: false
+    };
+    // Execution A writes root and nested documents
+    simulateAtomicCreate(`notifications/${notifId}`, payloadA, 100);
+    simulateAtomicCreate(`users/${adminUid}/notifications/${notifId}`, payloadA, 100);
+    assert_1.default.strictEqual(store[`notifications/${notifId}`].createdAt, 100);
+    assert_1.default.strictEqual(store[`users/${adminUid}/notifications/${notifId}`].createdAt, 100);
+    // Admin marks notification as READ at t=150
+    store[`notifications/${notifId}`].data.isRead = true;
+    store[`notifications/${notifId}`].data.read = true;
+    store[`users/${adminUid}/notifications/${notifId}`].data.isRead = true;
+    store[`users/${adminUid}/notifications/${notifId}`].data.read = true;
+    // Competing Execution B arrives at t=200 and attempts to write same notifications
+    const payloadB = {
+        id: notifId,
+        userId: adminUid,
+        type: 'REFUND_REQUEST',
+        title: '💸 User Refund Request Submitted',
+        isRead: false,
+        read: false
+    };
+    let executionBSuppressedRoot = false;
+    let executionBSuppressedNested = false;
+    try {
+        simulateAtomicCreate(`notifications/${notifId}`, payloadB, 200);
+    }
+    catch (err) {
+        if (err.code === 6 || err.message.includes('ALREADY_EXISTS')) {
+            executionBSuppressedRoot = true; // Safely handled
+        }
+        else {
+            throw err;
+        }
+    }
+    try {
+        simulateAtomicCreate(`users/${adminUid}/notifications/${notifId}`, payloadB, 200);
+    }
+    catch (err) {
+        if (err.code === 6 || err.message.includes('ALREADY_EXISTS')) {
+            executionBSuppressedNested = true; // Safely handled
+        }
+        else {
+            throw err;
+        }
+    }
+    assert_1.default.strictEqual(executionBSuppressedRoot, true, 'Root write must be safely suppressed when document exists');
+    assert_1.default.strictEqual(executionBSuppressedNested, true, 'Nested write must be safely suppressed when document exists');
+    // Verify invariants: isRead remains true, createdAt remains t=100
+    assert_1.default.strictEqual(store[`notifications/${notifId}`].data.isRead, true, 'isRead must not be reset to false');
+    assert_1.default.strictEqual(store[`notifications/${notifId}`].createdAt, 100, 'createdAt must not be overwritten by t=200');
+    assert_1.default.strictEqual(store[`users/${adminUid}/notifications/${notifId}`].data.isRead, true, 'nested isRead must not be reset to false');
+    assert_1.default.strictEqual(store[`users/${adminUid}/notifications/${notifId}`].createdAt, 100, 'nested createdAt must not be overwritten');
+});
+function createMockFirestore(initialState) {
+    const store = {
+        users: initialState?.users || {},
+        authorizedAdmins: initialState?.authorizedAdmins || {},
+        rootNotifications: initialState?.rootNotifications || {},
+        userNotifications: initialState?.userNotifications || {},
+        promotionRequests: initialState?.promotionRequests || {},
+        updateCalls: [],
+        failRootCreateFor: initialState?.failRootCreateFor,
+        failUserCreateFor: initialState?.failUserCreateFor,
+        failPromoUpdateFor: initialState?.failPromoUpdateFor,
+        failUsersQueryFor: initialState?.failUsersQueryFor,
+        failAuthAdminsGet: initialState?.failAuthAdminsGet,
+        failEmailLookupFor: initialState?.failEmailLookupFor
+    };
+    const db = {
+        collection: (colName) => {
+            if (colName === 'users') {
+                return {
+                    where: (field, _op, val) => ({
+                        get: async () => {
+                            if (store.failUsersQueryFor) {
+                                const err = store.failUsersQueryFor(field);
+                                if (err)
+                                    throw err;
+                            }
+                            const matched = Object.entries(store.users).filter(([_id, u]) => u[field] === val);
+                            return {
+                                empty: matched.length === 0,
+                                docs: matched.map(([id, u]) => ({ id, data: () => ({ ...u }) }))
+                            };
+                        },
+                        limit: (num) => ({
+                            get: async () => {
+                                if (field === 'email' && store.failEmailLookupFor) {
+                                    const err = store.failEmailLookupFor(val);
+                                    if (err)
+                                        throw err;
+                                }
+                                if (store.failUsersQueryFor) {
+                                    const err = store.failUsersQueryFor(field);
+                                    if (err)
+                                        throw err;
+                                }
+                                const matched = Object.entries(store.users)
+                                    .filter(([_id, u]) => u[field] === val)
+                                    .slice(0, num);
+                                return {
+                                    empty: matched.length === 0,
+                                    docs: matched.map(([id, u]) => ({ id, data: () => ({ ...u }) }))
+                                };
+                            }
+                        })
+                    }),
+                    doc: (uid) => ({
+                        collection: (subCol) => {
+                            if (subCol === 'notifications') {
+                                return {
+                                    doc: (notifId) => ({
+                                        create: async (payload) => {
+                                            if (store.failUserCreateFor) {
+                                                const err = store.failUserCreateFor(uid, notifId);
+                                                if (err)
+                                                    throw err;
+                                            }
+                                            if (!store.userNotifications[uid]) {
+                                                store.userNotifications[uid] = {};
+                                            }
+                                            if (store.userNotifications[uid][notifId]) {
+                                                const err = new Error(`6 ALREADY_EXISTS: Document already exists at users/${uid}/notifications/${notifId}`);
+                                                err.code = 6;
+                                                assert_1.default.strictEqual((0, promotionRefundTrigger_1.isAlreadyExistsError)(err), true);
+                                                throw err;
+                                            }
+                                            store.userNotifications[uid][notifId] = {
+                                                data: { ...payload },
+                                                createdAt: Date.now()
+                                            };
+                                        },
+                                        get: async () => {
+                                            const existing = store.userNotifications[uid]?.[notifId];
+                                            return {
+                                                exists: Boolean(existing),
+                                                data: () => (existing ? { ...existing.data } : undefined)
+                                            };
+                                        }
+                                    })
+                                };
+                            }
+                            throw new Error(`Unsupported subcollection: ${subCol}`);
+                        }
+                    })
+                };
+            }
+            if (colName === 'notifications') {
+                return {
+                    doc: (notifId) => ({
+                        create: async (payload) => {
+                            if (store.failRootCreateFor) {
+                                const err = store.failRootCreateFor(notifId);
+                                if (err)
+                                    throw err;
+                            }
+                            if (store.rootNotifications[notifId]) {
+                                const err = new Error(`6 ALREADY_EXISTS: Document already exists at notifications/${notifId}`);
+                                err.code = 6;
+                                throw err;
+                            }
+                            store.rootNotifications[notifId] = {
+                                data: { ...payload },
+                                createdAt: Date.now()
+                            };
+                        },
+                        get: async () => {
+                            const existing = store.rootNotifications[notifId];
+                            return {
+                                exists: Boolean(existing),
+                                data: () => (existing ? { ...existing.data } : undefined)
+                            };
+                        }
+                    })
+                };
+            }
+            if (colName === 'authorizedAdmins') {
+                return {
+                    get: async () => {
+                        if (store.failAuthAdminsGet) {
+                            const err = store.failAuthAdminsGet();
+                            if (err)
+                                throw err;
+                        }
+                        const entries = Object.entries(store.authorizedAdmins);
+                        return {
+                            empty: entries.length === 0,
+                            docs: entries.map(([id, data]) => ({ id, data: () => ({ ...data }) }))
+                        };
+                    }
+                };
+            }
+            if (colName === 'promotionRequests') {
+                return {
+                    doc: (requestId) => ({
+                        update: async (fields) => {
+                            if (store.failPromoUpdateFor) {
+                                const err = store.failPromoUpdateFor(requestId);
+                                if (err)
+                                    throw err;
+                            }
+                            store.updateCalls.push({ requestId, fields });
+                            store.promotionRequests[requestId] = {
+                                ...(store.promotionRequests[requestId] || {}),
+                                ...fields
+                            };
+                        }
+                    })
+                };
+            }
+            throw new Error(`Unsupported collection: ${colName}`);
+        }
+    };
+    return { db, store };
+}
+function createRefundEvent(requestId, receivedAmount, currency = 'USD') {
+    return {
+        params: { requestId },
+        data: {
+            before: {
+                data: () => ({
+                    refundRequested: false,
+                    refundStatus: null
+                })
+            },
+            after: {
+                data: () => ({
+                    id: requestId,
+                    receivedAmount,
+                    currency,
+                    planName: 'Pro Tier',
+                    refundRequested: true,
+                    refundStatus: 'PENDING',
+                    refundProofImages: ['https://example.com/proof1.png']
+                })
+            }
+        }
+    };
+}
+async function runAllPhase2D11Tests() {
+    // Test 18: Partial notification failure (transient error on one write; others attempted; handler rejects; financial update skipped)
+    await runAsyncTest('Production Handler Test 18: Partial notification failure propagates, others attempted, financial update skipped', async () => {
+        const { db, store } = createMockFirestore({
+            users: {
+                admin_alpha: { isAdmin: true },
+                admin_beta: { isSuperAdmin: true }
+            },
+            promotionRequests: {
+                req_partial_1: { receivedAmount: 1000 }
+            },
+            failUserCreateFor: (adminUid, _notifId) => {
+                if (adminUid === 'admin_alpha') {
+                    const err = new Error('14 UNAVAILABLE: Transient backend timeout');
+                    err.code = 14;
+                    return err;
+                }
+                return null;
+            }
+        });
+        const event = createRefundEvent('req_partial_1', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Handler must reject when a required notification fails');
+        assert_1.default.ok(caughtError.message.includes('Failed 1 required notification write(s)'));
+        assert_1.default.ok(caughtError.message.includes('Transient backend timeout'));
+        // Root notifications must both have been attempted and succeeded
+        assert_1.default.ok(store.rootNotifications['refund_req_req_partial_1_admin_alpha'] !== undefined, 'Admin alpha root write must have succeeded');
+        assert_1.default.ok(store.rootNotifications['refund_req_req_partial_1_admin_beta'] !== undefined, 'Admin beta root write must have succeeded');
+        // Admin beta nested notification succeeded
+        assert_1.default.ok(store.userNotifications['admin_beta']?.['refund_req_req_partial_1_admin_beta'] !== undefined, 'Admin beta nested write must have succeeded');
+        // Admin alpha nested notification failed
+        assert_1.default.strictEqual(store.userNotifications['admin_alpha']?.['refund_req_req_partial_1_admin_alpha'], undefined, 'Admin alpha nested write must be missing');
+        // Authoritative financial update must NOT have been called
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not execute when a notification write fails');
+        assert_1.default.strictEqual(store.promotionRequests['req_partial_1'].refundCalculatedAmount, undefined);
+    });
+    // Test 19: Recovery on a subsequent invocation (missing notifications created, existing preserved, financial update succeeds)
+    await runAsyncTest('Production Handler Test 19: Recovery on retry creates missing notifications, preserves existing, commits financials', async () => {
+        // Set up state matching post-failure from Test 18
+        const { db, store } = createMockFirestore({
+            users: {
+                admin_alpha: { isAdmin: true },
+                admin_beta: { isSuperAdmin: true }
+            },
+            promotionRequests: {
+                req_retry_1: { receivedAmount: 1000 }
+            },
+            rootNotifications: {
+                refund_req_req_retry_1_admin_alpha: {
+                    data: {
+                        id: 'refund_req_req_retry_1_admin_alpha',
+                        userId: 'admin_alpha',
+                        type: 'REFUND_REQUEST',
+                        requestId: 'req_retry_1',
+                        relatedId: 'req_retry_1',
+                        isRead: false,
+                        read: false
+                    },
+                    createdAt: 100
+                },
+                refund_req_req_retry_1_admin_beta: {
+                    data: {
+                        id: 'refund_req_req_retry_1_admin_beta',
+                        userId: 'admin_beta',
+                        type: 'REFUND_REQUEST',
+                        requestId: 'req_retry_1',
+                        relatedId: 'req_retry_1',
+                        isRead: true, // Marked as read by Beta admin before retry
+                        read: true
+                    },
+                    createdAt: 100
+                }
+            },
+            userNotifications: {
+                admin_beta: {
+                    refund_req_req_retry_1_admin_beta: {
+                        data: {
+                            id: 'refund_req_req_retry_1_admin_beta',
+                            userId: 'admin_beta',
+                            type: 'REFUND_REQUEST',
+                            requestId: 'req_retry_1',
+                            relatedId: 'req_retry_1',
+                            isRead: true, // Marked as read
+                            read: true
+                        },
+                        createdAt: 100
+                    }
+                }
+            }
+        });
+        const event = createRefundEvent('req_retry_1', 1000);
+        // Invoke retry (no failure simulator configured)
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        assert_1.default.strictEqual(result.adminCount, 2);
+        assert_1.default.strictEqual(result.refundAmount, 950);
+        assert_1.default.strictEqual(result.retentionAmount, 50);
+        // Missing nested notification for admin_alpha is now created
+        assert_1.default.ok(store.userNotifications['admin_alpha']?.['refund_req_req_retry_1_admin_alpha'] !== undefined, 'Admin alpha nested notification must be created on retry');
+        // Existing documents preserved with original isRead: true and createdAt: 100
+        assert_1.default.strictEqual(store.rootNotifications['refund_req_req_retry_1_admin_beta'].data.isRead, true);
+        assert_1.default.strictEqual(store.rootNotifications['refund_req_req_retry_1_admin_beta'].createdAt, 100);
+        assert_1.default.strictEqual(store.userNotifications['admin_beta']['refund_req_req_retry_1_admin_beta'].data.isRead, true);
+        assert_1.default.strictEqual(store.userNotifications['admin_beta']['refund_req_req_retry_1_admin_beta'].createdAt, 100);
+        // Financial update executed
+        assert_1.default.strictEqual(store.updateCalls.length, 1);
+        assert_1.default.strictEqual(store.promotionRequests['req_retry_1'].refundCalculatedAmount, 950);
+        assert_1.default.strictEqual(store.promotionRequests['req_retry_1'].refundRetentionAmount, 50);
+    });
+    // Test 20: All expected duplicates (all notifications exist; handler succeeds idempotently)
+    await runAsyncTest('Production Handler Test 20: All expected duplicates verified cleanly without overwriting', async () => {
+        const notifId = 'refund_req_req_dup_admin_omega';
+        const { db, store } = createMockFirestore({
+            users: { admin_omega: { isAdmin: true } },
+            promotionRequests: { req_dup: { receivedAmount: 2000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        userId: 'admin_omega',
+                        type: 'REFUND_REQUEST',
+                        requestId: 'req_dup',
+                        relatedId: 'req_dup',
+                        isRead: true,
+                        read: true
+                    },
+                    createdAt: 250
+                }
+            },
+            userNotifications: {
+                admin_omega: {
+                    [notifId]: {
+                        data: {
+                            id: notifId,
+                            userId: 'admin_omega',
+                            type: 'REFUND_REQUEST',
+                            requestId: 'req_dup',
+                            relatedId: 'req_dup',
+                            isRead: true,
+                            read: true
+                        },
+                        createdAt: 250
+                    }
+                }
+            }
+        });
+        const event = createRefundEvent('req_dup', 2000);
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        assert_1.default.strictEqual(result.refundAmount, 1900);
+        assert_1.default.strictEqual(result.retentionAmount, 100);
+        // Still preserved
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].createdAt, 250);
+        assert_1.default.strictEqual(store.userNotifications['admin_omega'][notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.userNotifications['admin_omega'][notifId].createdAt, 250);
+        assert_1.default.strictEqual(store.promotionRequests['req_dup'].refundCalculatedAmount, 1900);
+    });
+    // Test 21: Financial update failure propagates and subsequent invocation is idempotent
+    await runAsyncTest('Production Handler Test 21: Financial update failure propagates and retry commits idempotently', async () => {
+        const { db, store } = createMockFirestore({
+            users: { admin_gamma: { isAdmin: true } },
+            promotionRequests: { req_update_fail: { receivedAmount: 500 } },
+            failPromoUpdateFor: (_requestId) => new Error('14 UNAVAILABLE: Firestore write timeout on update')
+        });
+        const event = createRefundEvent('req_update_fail', 500);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null);
+        assert_1.default.ok(caughtError.message.includes('Firestore write timeout on update'));
+        // Notifications were created before the financial update failed
+        const notifId = 'refund_req_req_update_fail_admin_gamma';
+        assert_1.default.ok(store.rootNotifications[notifId] !== undefined);
+        assert_1.default.ok(store.userNotifications['admin_gamma']?.[notifId] !== undefined);
+        // Clear failure and retry
+        store.failPromoUpdateFor = undefined;
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        assert_1.default.strictEqual(store.promotionRequests['req_update_fail'].refundCalculatedAmount, 475);
+        assert_1.default.strictEqual(store.promotionRequests['req_update_fail'].refundRetentionAmount, 25);
+    });
+    // Test 22: Existing notification integrity (isRead, read, createdAt, and custom fields remain untouched)
+    await runAsyncTest('Production Handler Test 22: Existing notification fields remain untouched across repeated invocations', async () => {
+        const notifId = 'refund_req_req_integ_admin_zeta';
+        const { db, store } = createMockFirestore({
+            users: { admin_zeta: { isAdmin: true } },
+            promotionRequests: { req_integ: { receivedAmount: 300 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        userId: 'admin_zeta',
+                        type: 'REFUND_REQUEST',
+                        requestId: 'req_integ',
+                        relatedId: 'req_integ',
+                        isRead: true,
+                        read: true,
+                        customAdminNote: 'Reviewed by admin Zeta'
+                    },
+                    createdAt: 777
+                }
+            },
+            userNotifications: {
+                admin_zeta: {
+                    [notifId]: {
+                        data: {
+                            id: notifId,
+                            userId: 'admin_zeta',
+                            type: 'REFUND_REQUEST',
+                            requestId: 'req_integ',
+                            relatedId: 'req_integ',
+                            isRead: true,
+                            read: true,
+                            customAdminNote: 'Reviewed in nested subcollection'
+                        },
+                        createdAt: 777
+                    }
+                }
+            }
+        });
+        const event = createRefundEvent('req_integ', 300);
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.read, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.customAdminNote, 'Reviewed by admin Zeta');
+        assert_1.default.strictEqual(store.rootNotifications[notifId].createdAt, 777);
+        assert_1.default.strictEqual(store.userNotifications['admin_zeta'][notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.userNotifications['admin_zeta'][notifId].data.read, true);
+        assert_1.default.strictEqual(store.userNotifications['admin_zeta'][notifId].data.customAdminNote, 'Reviewed in nested subcollection');
+        assert_1.default.strictEqual(store.userNotifications['admin_zeta'][notifId].createdAt, 777);
+    });
+    // Test 23: Multiple administrators (failure on one admin does not prevent attempts for others)
+    await runAsyncTest('Production Handler Test 23: Multi-admin dispatch attempts all recipients despite failure on one', async () => {
+        const { db, store } = createMockFirestore({
+            users: {
+                admin_1: { isAdmin: true },
+                admin_2: { isSuperAdmin: true },
+                admin_3: { isAuthorizedAdmin: true }
+            },
+            promotionRequests: { req_multi: { receivedAmount: 100 } },
+            // Root write fails only for admin_2
+            failRootCreateFor: (notifId) => {
+                if (notifId.includes('admin_2')) {
+                    return new Error('Root write failure for admin_2');
+                }
+                return null;
+            }
+        });
+        const event = createRefundEvent('req_multi', 100);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null);
+        // Writes for admin_1 and admin_3 must have been attempted and succeeded
+        assert_1.default.ok(store.rootNotifications['refund_req_req_multi_admin_1'] !== undefined);
+        assert_1.default.ok(store.userNotifications['admin_1']?.['refund_req_req_multi_admin_1'] !== undefined);
+        assert_1.default.ok(store.rootNotifications['refund_req_req_multi_admin_3'] !== undefined);
+        assert_1.default.ok(store.userNotifications['admin_3']?.['refund_req_req_multi_admin_3'] !== undefined);
+        // Admin 2 root failed
+        assert_1.default.strictEqual(store.rootNotifications['refund_req_req_multi_admin_2'], undefined);
+        // Financial update must not have run
+        assert_1.default.strictEqual(store.updateCalls.length, 0);
+    });
+    // Test 24: Unexpected ALREADY_EXISTS collision is rejected and not silently accepted
+    await runAsyncTest('Production Handler Test 24: Unexpected collision on deterministic ID is detected and rejected', async () => {
+        const notifId = 'refund_req_req_collision_admin_col';
+        const { db, store } = createMockFirestore({
+            users: { admin_col: { isAdmin: true } },
+            // Pre-populate with completely unrelated notification payload
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'ORDER_DISPUTE', // Not REFUND_REQUEST!
+                        requestId: 'unrelated_other_req',
+                        userId: 'unrelated_user'
+                    },
+                    createdAt: 500
+                }
+            },
+            promotionRequests: { req_collision: { receivedAmount: 500 } }
+        });
+        const event = createRefundEvent('req_collision', 500);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Must reject unexpected collision');
+        assert_1.default.ok(caughtError.message.includes('Unexpected collision on root notification document'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not run when identity collision occurs');
+    });
+    // =========================================================================
+    // PHASE 2D.16 TARGETED REMEDIATION TESTS
+    // =========================================================================
+    // Direct Unit Tests for isExpectedRefundNotificationIdentity Helper
+    runTest('Helper Test 25: isExpectedRefundNotificationIdentity accepts when both requestId and relatedId match', () => {
+        const validDoc = {
+            type: 'REFUND_REQUEST',
+            userId: 'admin_test_1',
+            requestId: 'req_match_100',
+            relatedId: 'req_match_100'
+        };
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)(validDoc, 'req_match_100', 'admin_test_1'), true);
+    });
+    runTest('Helper Test 26: isExpectedRefundNotificationIdentity accepts legacy document with requestId only', () => {
+        const legacyDoc = {
+            type: 'REFUND_REQUEST',
+            userId: 'admin_test_1',
+            requestId: 'req_match_100'
+        };
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)(legacyDoc, 'req_match_100', 'admin_test_1'), true);
+    });
+    runTest('Helper Test 27: isExpectedRefundNotificationIdentity accepts legacy document with relatedId only', () => {
+        const legacyDoc = {
+            type: 'REFUND_REQUEST',
+            userId: 'admin_test_1',
+            relatedId: 'req_match_100'
+        };
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)(legacyDoc, 'req_match_100', 'admin_test_1'), true);
+    });
+    runTest('Helper Test 28: isExpectedRefundNotificationIdentity rejects conflicting requestId and relatedId', () => {
+        const conflictingDoc = {
+            type: 'REFUND_REQUEST',
+            userId: 'admin_test_1',
+            requestId: 'req_match_100',
+            relatedId: 'req_conflict_999'
+        };
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)(conflictingDoc, 'req_match_100', 'admin_test_1'), false);
+    });
+    runTest('Helper Test 29: isExpectedRefundNotificationIdentity rejects document with neither identity field', () => {
+        const emptyIdentityDoc = {
+            type: 'REFUND_REQUEST',
+            userId: 'admin_test_1'
+        };
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)(emptyIdentityDoc, 'req_match_100', 'admin_test_1'), false);
+    });
+    runTest('Helper Test 30: isExpectedRefundNotificationIdentity rejects malformed identity values', () => {
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', requestId: '' }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', requestId: '   ' }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', requestId: 12345 }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', requestId: null }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', relatedId: '' }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', relatedId: '   ' }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({ type: 'REFUND_REQUEST', userId: 'admin_1', relatedId: { id: 'req_1' } }, 'req_1', 'admin_1'), false);
+    });
+    runTest('Helper Test 31: isExpectedRefundNotificationIdentity rejects matching field paired with malformed other field', () => {
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({
+            type: 'REFUND_REQUEST',
+            userId: 'admin_1',
+            requestId: 'req_1',
+            relatedId: ''
+        }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({
+            type: 'REFUND_REQUEST',
+            userId: 'admin_1',
+            requestId: 'req_1',
+            relatedId: '   '
+        }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({
+            type: 'REFUND_REQUEST',
+            userId: 'admin_1',
+            requestId: 'req_1',
+            relatedId: 999
+        }, 'req_1', 'admin_1'), false);
+    });
+    runTest('Helper Test 32: isExpectedRefundNotificationIdentity rejects wrong type or wrong userId', () => {
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({
+            type: 'OTHER_TYPE',
+            userId: 'admin_1',
+            requestId: 'req_1'
+        }, 'req_1', 'admin_1'), false);
+        assert_1.default.strictEqual((0, promotionRefundTrigger_1.isExpectedRefundNotificationIdentity)({
+            type: 'REFUND_REQUEST',
+            userId: 'wrong_admin',
+            requestId: 'req_1'
+        }, 'req_1', 'admin_1'), false);
+    });
+    // Production Handler Integration Tests
+    await runAsyncTest('Production Handler Test 33: Zero administrators fails closed without financial update', async () => {
+        const { db, store } = createMockFirestore({
+            users: {},
+            authorizedAdmins: {},
+            promotionRequests: { req_zero_admin: { receivedAmount: 1000 } }
+        });
+        const event = createRefundEvent('req_zero_admin', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Handler must fail closed when zero administrators exist');
+        assert_1.default.ok(caughtError.message.includes('No admin users found'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Authoritative financial update must not occur when 0 admins found');
+        assert_1.default.strictEqual(store.promotionRequests['req_zero_admin'].refundCalculatedAmount, undefined);
+    });
+    await runAsyncTest('Production Handler Test 34: Primary administrator query failure propagates without financial update', async () => {
+        const { db, store } = createMockFirestore({
+            users: { admin_1: { isAdmin: true } },
+            promotionRequests: { req_prim_fail: { receivedAmount: 1000 } },
+            failUsersQueryFor: (field) => {
+                if (field === 'isAdmin') {
+                    return new Error('14 UNAVAILABLE: users.where(isAdmin) timeout');
+                }
+                return null;
+            }
+        });
+        const event = createRefundEvent('req_prim_fail', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Primary query failure must propagate');
+        assert_1.default.ok(caughtError.message.includes('users.where(isAdmin) timeout'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur on primary query failure');
+    });
+    await runAsyncTest('Production Handler Test 35: Auxiliary authorizedAdmins query failure propagates without financial update', async () => {
+        const { db, store } = createMockFirestore({
+            users: { admin_1: { isAdmin: true } },
+            authorizedAdmins: { 'admin@test.com': {} },
+            promotionRequests: { req_aux_fail: { receivedAmount: 1000 } },
+            failAuthAdminsGet: () => new Error('14 UNAVAILABLE: authorizedAdmins.get() timeout')
+        });
+        const event = createRefundEvent('req_aux_fail', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Auxiliary authorizedAdmins query failure must propagate');
+        assert_1.default.ok(caughtError.message.includes('authorizedAdmins.get() timeout'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur on auxiliary query failure');
+    });
+    await runAsyncTest('Production Handler Test 36: Required secondary email lookup failure propagates without financial update', async () => {
+        const { db, store } = createMockFirestore({
+            users: { admin_user_sec: { email: 'sec@test.com' } },
+            authorizedAdmins: { 'sec@test.com': {} },
+            promotionRequests: { req_sec_fail: { receivedAmount: 1000 } },
+            failEmailLookupFor: (email) => {
+                if (email === 'sec@test.com') {
+                    return new Error('14 UNAVAILABLE: Email lookup failed for sec@test.com');
+                }
+                return null;
+            }
+        });
+        const event = createRefundEvent('req_sec_fail', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Secondary email lookup failure must propagate');
+        assert_1.default.ok(caughtError.message.includes('Email lookup failed for sec@test.com'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur on secondary lookup failure');
+    });
+    await runAsyncTest('Production Handler Test 37: Multi-source admin aggregation combines all sources, deduplicates, and dispatches', async () => {
+        const { db, store } = createMockFirestore({
+            users: {
+                admin_multi_1: { isAdmin: true, email: 'adm1@test.com' },
+                admin_multi_2: { isSuperAdmin: true, email: 'adm2@test.com' },
+                admin_multi_3: { isAuthorizedAdmin: true, email: 'adm3@test.com' },
+                admin_multi_4: { email: 'auth_only@test.com' } // Authorized solely through authorizedAdmins collection
+            },
+            authorizedAdmins: {
+                'adm1@test.com': {}, // Duplicate UID of admin_multi_1
+                'auth_only@test.com': {}
+            },
+            promotionRequests: { req_multi_agg: { receivedAmount: 1000 } }
+        });
+        const event = createRefundEvent('req_multi_agg', 1000);
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        // Deduplicated count must be 4 (admin_multi_1, admin_multi_2, admin_multi_3, admin_multi_4)
+        assert_1.default.strictEqual(result.adminCount, 4);
+        // Verify all 4 received root and nested notifications
+        for (const uid of ['admin_multi_1', 'admin_multi_2', 'admin_multi_3', 'admin_multi_4']) {
+            const expectedId = `refund_req_req_multi_agg_${uid}`;
+            assert_1.default.ok(store.rootNotifications[expectedId] !== undefined, `Root notif missing for ${uid}`);
+            assert_1.default.ok(store.userNotifications[uid]?.[expectedId] !== undefined, `Nested notif missing for ${uid}`);
+        }
+        // Financial update executed
+        assert_1.default.strictEqual(store.updateCalls.length, 1);
+        assert_1.default.strictEqual(store.promotionRequests['req_multi_agg'].refundCalculatedAmount, 950);
+    });
+    await runAsyncTest('Production Handler Test 38: Accepts legacy requestId-only duplicate and does not overwrite', async () => {
+        const notifId = 'refund_req_req_leg_req_admin_leg1';
+        const { db, store } = createMockFirestore({
+            users: { admin_leg1: { isAdmin: true } },
+            promotionRequests: { req_leg_req: { receivedAmount: 1000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'REFUND_REQUEST',
+                        userId: 'admin_leg1',
+                        requestId: 'req_leg_req',
+                        // relatedId genuinely absent!
+                        isRead: true,
+                        read: true
+                    },
+                    createdAt: 888
+                }
+            },
+            userNotifications: {
+                admin_leg1: {
+                    [notifId]: {
+                        data: {
+                            id: notifId,
+                            type: 'REFUND_REQUEST',
+                            userId: 'admin_leg1',
+                            requestId: 'req_leg_req',
+                            // relatedId genuinely absent!
+                            isRead: true,
+                            read: true
+                        },
+                        createdAt: 888
+                    }
+                }
+            }
+        });
+        const event = createRefundEvent('req_leg_req', 1000);
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        // Existing fields preserved
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].createdAt, 888);
+        assert_1.default.strictEqual(store.userNotifications['admin_leg1'][notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.updateCalls.length, 1);
+    });
+    await runAsyncTest('Production Handler Test 39: Accepts legacy relatedId-only duplicate and does not overwrite', async () => {
+        const notifId = 'refund_req_req_leg_rel_admin_leg2';
+        const { db, store } = createMockFirestore({
+            users: { admin_leg2: { isAdmin: true } },
+            promotionRequests: { req_leg_rel: { receivedAmount: 1000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'REFUND_REQUEST',
+                        userId: 'admin_leg2',
+                        relatedId: 'req_leg_rel',
+                        // requestId genuinely absent!
+                        isRead: true,
+                        read: true
+                    },
+                    createdAt: 999
+                }
+            },
+            userNotifications: {
+                admin_leg2: {
+                    [notifId]: {
+                        data: {
+                            id: notifId,
+                            type: 'REFUND_REQUEST',
+                            userId: 'admin_leg2',
+                            relatedId: 'req_leg_rel',
+                            // requestId genuinely absent!
+                            isRead: true,
+                            read: true
+                        },
+                        createdAt: 999
+                    }
+                }
+            }
+        });
+        const event = createRefundEvent('req_leg_rel', 1000);
+        const result = await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        assert_1.default.strictEqual(result.triggered, true);
+        // Existing fields preserved
+        assert_1.default.strictEqual(store.rootNotifications[notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.rootNotifications[notifId].createdAt, 999);
+        assert_1.default.strictEqual(store.userNotifications['admin_leg2'][notifId].data.isRead, true);
+        assert_1.default.strictEqual(store.updateCalls.length, 1);
+    });
+    await runAsyncTest('Production Handler Test 40: Rejects conflicting identity fields on duplicate and blocks financial update', async () => {
+        const notifId = 'refund_req_req_conf_admin_cf';
+        const { db, store } = createMockFirestore({
+            users: { admin_cf: { isAdmin: true } },
+            promotionRequests: { req_conf: { receivedAmount: 1000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'REFUND_REQUEST',
+                        userId: 'admin_cf',
+                        requestId: 'req_conf',
+                        relatedId: 'req_COMPLETELY_DIFFERENT' // Conflicting identity field!
+                    },
+                    createdAt: 123
+                }
+            }
+        });
+        const event = createRefundEvent('req_conf', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Must reject conflicting identity fields');
+        assert_1.default.ok(caughtError.message.includes('Unexpected collision on root notification document'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur when identity fields conflict');
+    });
+    await runAsyncTest('Production Handler Test 41: Rejects missing identity on duplicate and blocks financial update', async () => {
+        const notifId = 'refund_req_req_noid_admin_ni';
+        const { db, store } = createMockFirestore({
+            users: { admin_ni: { isAdmin: true } },
+            promotionRequests: { req_noid: { receivedAmount: 1000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'REFUND_REQUEST',
+                        userId: 'admin_ni'
+                        // Neither requestId nor relatedId present!
+                    },
+                    createdAt: 456
+                }
+            }
+        });
+        const event = createRefundEvent('req_noid', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Must reject duplicate with missing identity');
+        assert_1.default.ok(caughtError.message.includes('Unexpected collision on root notification document'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur when duplicate lacks identity');
+    });
+    await runAsyncTest('Production Handler Test 42: Rejects malformed identity fields on duplicate and blocks financial update', async () => {
+        const notifId = 'refund_req_req_mal_admin_ml';
+        const { db, store } = createMockFirestore({
+            users: { admin_ml: { isAdmin: true } },
+            promotionRequests: { req_mal: { receivedAmount: 1000 } },
+            rootNotifications: {
+                [notifId]: {
+                    data: {
+                        id: notifId,
+                        type: 'REFUND_REQUEST',
+                        userId: 'admin_ml',
+                        requestId: 'req_mal',
+                        relatedId: '   ' // Malformed whitespace-only string!
+                    },
+                    createdAt: 789
+                }
+            }
+        });
+        const event = createRefundEvent('req_mal', 1000);
+        let caughtError = null;
+        try {
+            await (0, promotionRefundTrigger_1.handlePromotionRefundRequestedEvent)(event, db);
+        }
+        catch (err) {
+            caughtError = err;
+        }
+        assert_1.default.ok(caughtError !== null, 'Must reject duplicate with malformed identity field');
+        assert_1.default.ok(caughtError.message.includes('Unexpected collision on root notification document'));
+        assert_1.default.strictEqual(store.updateCalls.length, 0, 'Financial update must not occur when identity is malformed');
+    });
+    console.log(`\nAll ${testsPassed}/${testsRun} Phase 2D tests passed successfully.\n`);
+}
+runAllPhase2D11Tests().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
 //# sourceMappingURL=promotionRefundSecurity.test.js.map

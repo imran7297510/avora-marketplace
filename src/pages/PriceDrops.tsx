@@ -54,6 +54,8 @@ interface PriceDropListing {
   title: string;
   description: string;
   price: number;
+  currency?: string;
+  currencySymbol?: string;
   previousPrice?: number;
   originalPrice?: number;
   priceDropped?: boolean;
@@ -475,6 +477,7 @@ export function PriceDrops() {
         listingImage: selectedOfferItem.images?.[0] || null,
         originalPrice: selectedOfferItem.price,
         proposedPrice: Number(offerPrice),
+        currency: selectedOfferItem.currency || 'PKR',
         notes: offerNotes,
         status: "pending",
         userType: "buyer",
