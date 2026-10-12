@@ -35,7 +35,7 @@ jobs:
 
       - name: Run Firestore Rules Tests via Emulator
         run: |
-          npx firebase emulators:exec --only firestore \
+          npx firebase-tools@15.29.0 emulators:exec --only firestore \
             --project demo-avora-security-ci \
             "npm run test:rules"
         env:
