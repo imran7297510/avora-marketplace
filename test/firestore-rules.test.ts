@@ -452,3 +452,194 @@ test('Admin Path 3: users/{uid}.isAdmin / isSuperAdmin authorization & user flag
     isPermissionDenied
   );
 });
+
+// ==========================================
+// ARENA AUCTIONS SECURITY TESTS (8 Test Blocks)
+// ==========================================
+
+test('Arena Auctions 1: Unauthenticated public read allowed', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_pub').set({
+      title: 'Public Item',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'seller_100',
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  await assert.doesNotReject(() => unauthDb.collection('arena_auctions').doc('auc_pub').get());
+});
+
+test('Arena Auctions 2: Unauthenticated auction creation denied', async () => {
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  await assert.rejects(
+    () => unauthDb.collection('arena_auctions').doc('auc_unauth').set({
+      title: 'Unauthorized Item',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 3: Auction creation with mismatched sellerId denied', async () => {
+  const attackerDb = testEnv.authenticatedContext('user_attacker_999').firestore();
+  await assert.rejects(
+    () => attackerDb.collection('arena_auctions').doc('auc_forgery').set({
+      title: 'Forgery Item',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100', // Mismatched! Auth UID is user_attacker_999
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 4: Valid auction creation by authenticated seller allowed', async () => {
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_valid').set({
+      title: 'Valid Item',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 10
+    })
+  );
+});
+
+test('Arena Auctions 5: Unauthorized modification of protected auction fields denied', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_protected').set({
+      title: 'Protected Item',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 10
+    });
+  });
+
+  const attackerDb = testEnv.authenticatedContext('user_attacker_999').firestore();
+  await assert.rejects(
+    () => attackerDb.collection('arena_auctions').doc('auc_protected').update({
+      currentBid: 5000,
+      highestBidderId: 'user_attacker_999'
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 6: Valid incremental bid by non-seller bidder allowed', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_bid').set({
+      title: 'Biddable Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const bidderDb = testEnv.authenticatedContext('user_bidder_200').firestore();
+  await assert.doesNotReject(
+    () => bidderDb.collection('arena_auctions').doc('auc_bid').update({
+      currentBid: 550,
+      highestBidderId: 'user_bidder_200',
+      bidsCount: 1,
+      userBidCounts: { user_bidder_200: 1 },
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 7: Seller self-bidding denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_self').set({
+      title: 'Self Bid Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_self').update({
+      currentBid: 550,
+      highestBidderId: 'user_seller_100',
+      bidsCount: 1,
+      userBidCounts: { user_seller_100: 1 },
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 8: Invalid terminal auction lifecycle transition (sold -> active) denied', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_lifecycle').set({
+      title: 'Lifecycle Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'sold',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: serverTimestamp(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_lifecycle').update({
+      status: 'active',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});

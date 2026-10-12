@@ -123,9 +123,9 @@ export async function settleExpiredBattleBidsAuctionsServer(): Promise<AuctionSe
           }
 
           if (finalStatus === 'sold' && highestBidderId) {
-            // Authoritatively resolve seller UID
+            // Authoritatively resolve seller UID within transaction boundary
             const rawSellerId = typeof freshData.sellerId === 'string' ? freshData.sellerId.trim() : '';
-            const authoritativeSellerUid = await resolveAuthoritativeSellerUidServer(auctionId, rawSellerId);
+            const authoritativeSellerUid = await resolveAuthoritativeSellerUidServer(auctionId, rawSellerId, transaction);
 
             if (!authoritativeSellerUid) {
               console.error(`[auctionSettlementServer] Refusing to settle auction ${auctionId}: unable to resolve authoritative seller UID. Failing closed.`);

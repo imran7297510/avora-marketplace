@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from 'firebase-admin/app';
-import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, Timestamp, Transaction } from 'firebase-admin/firestore';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 
 if (!getApps().length) {
@@ -26,14 +26,16 @@ export interface ServerRunnerUpBid {
  * 
  * CASE B — Anonymous / Masked Seller:
  * If publicSellerId starts with 'anon_seller_', reads arena_auctions/{auctionId}/private/seller (1 point read)
- * and retrieves the validated sellerUid.
+ * and retrieves the validated sellerUid. If an active transaction is provided, executes transaction.get()
+ * to guarantee snapshot isolation within the settlement transaction.
  * 
  * CASE C — Missing / Invalid Private Seller:
  * If private/seller does not exist or lacks a valid real sellerUid, returns null.
  */
 export async function resolveAuthoritativeSellerUidServer(
   auctionId: string,
-  publicSellerId?: string
+  publicSellerId?: string,
+  transaction?: Transaction
 ): Promise<string | null> {
   if (!auctionId) return null;
 
@@ -46,12 +48,15 @@ export async function resolveAuthoritativeSellerUidServer(
 
   // CASE B — ANONYMOUS/MASKED SELLER: Read authoritative private/seller document
   try {
-    const privateDoc = await db
+    const privateRef = db
       .collection('arena_auctions')
       .doc(auctionId)
       .collection('private')
-      .doc('seller')
-      .get();
+      .doc('seller');
+
+    const privateDoc = transaction
+      ? await transaction.get(privateRef)
+      : await privateRef.get();
 
     if (privateDoc.exists) {
       const sellerUid = privateDoc.data()?.sellerUid;

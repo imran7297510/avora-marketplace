@@ -784,25 +784,18 @@ export function Home() {
           setLoading(true);
         }
 
-        // Fetch server-side active listings count (marketplace-wide)
-        try {
-          const liveCountSnap = await getCountFromServer(
-            query(collection(db, 'listings'), where('status', '==', 'LIVE'))
-          );
-          const liveCount = liveCountSnap.data().count;
-          cachedTotalLiveListingsCount = liveCount;
-          cachedTotalLiveListingsTimestamp = Date.now();
-          if (isMounted) {
-            setTotalActiveListingsCount(liveCount);
-          }
-        } catch (cntErr) {
-          console.warn("Could not fetch server-side active listings count:", cntErr);
-        }
-
-        // Fetch server-side marketplace authoritative metrics in a single consolidated read
+        // 2. Fetch server-side marketplace authoritative metrics in a single consolidated read
         try {
           const marketplaceMetrics = await marketplaceMetricsService.getAuthoritativeMarketplaceMetrics();
           if (marketplaceMetrics) {
+            // Live listings count from consolidated metrics
+            if (typeof marketplaceMetrics.totalLiveListingsCount === 'number' && marketplaceMetrics.totalLiveListingsCount >= 0) {
+              cachedTotalLiveListingsCount = marketplaceMetrics.totalLiveListingsCount;
+              cachedTotalLiveListingsTimestamp = Date.now();
+              if (isMounted) {
+                setTotalActiveListingsCount(marketplaceMetrics.totalLiveListingsCount);
+              }
+            }
             if (typeof marketplaceMetrics.activeCitiesCount === 'number' && marketplaceMetrics.activeCitiesCount >= 0) {
               cachedTotalActiveCitiesCount = marketplaceMetrics.activeCitiesCount;
               cachedTotalActiveCitiesTimestamp = Date.now();
@@ -827,6 +820,23 @@ export function Home() {
           }
         } catch (mErr) {
           console.warn("Could not fetch server-side authoritative marketplace metrics:", mErr);
+        }
+
+        // 3. Fallback: only execute separate server count query if authoritative metrics were unavailable
+        if (cachedTotalLiveListingsCount === null) {
+          try {
+            const liveCountSnap = await getCountFromServer(
+              query(collection(db, 'listings'), where('status', '==', 'LIVE'))
+            );
+            const liveCount = liveCountSnap.data().count;
+            cachedTotalLiveListingsCount = liveCount;
+            cachedTotalLiveListingsTimestamp = Date.now();
+            if (isMounted) {
+              setTotalActiveListingsCount(liveCount);
+            }
+          } catch (cntErr) {
+            console.warn("Could not fetch server-side active listings count fallback:", cntErr);
+          }
         }
 
         let docs: Listing[] = [];
