@@ -1434,6 +1434,9 @@ service cloud.firestore {
           // Action 2: View/Watch counter increments
           (
             isSignedIn() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'
+            ]) &&
             incoming().status == existing().status &&
             incoming().currentBid == existing().currentBid &&
             incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
@@ -1501,14 +1504,18 @@ service cloud.firestore {
                   incoming().watchersCount == existing().get('watchersCount', 0)
                 )
               )
-            ) &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'
-            ])
+            )
           ) ||
           // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)
           (
             isAuctionSeller() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
+              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',
+              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
+              'startTime', 'endTime'
+            ]) &&
             incoming().currentBid == existing().currentBid &&
             incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
             incoming().sellerId == existing().sellerId &&
@@ -1557,14 +1564,7 @@ service cloud.firestore {
                 incoming().startTime == existing().startTime &&
                 incoming().endTime == existing().endTime
               )
-            ) &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
-              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
-              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',
-              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
-              'startTime', 'endTime'
-            ])
+            )
           ) ||
           // Action 4: Client Settlement by Winning Bidder past endTime
           (
