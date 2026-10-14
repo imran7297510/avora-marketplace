@@ -26,7 +26,7 @@ before(async () => {
   const rulesContent = fs.readFileSync(rulesPath, 'utf8');
 
   testEnv = await initializeTestEnvironment({
-    projectId: 'demo-avora-admin-paths-test',
+    projectId: 'demo-avora-security-ci',
     firestore: {
       rules: rulesContent,
       host: '127.0.0.1',
