@@ -766,3 +766,329 @@ test('Arena Auctions 12: Legitimate view-counter increment (+1) by viewer allowe
   );
 });
 
+test('Arena Auctions 13: Expired-auction bidding denied', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_expired_bid').set({
+      title: 'Expired Auction',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const bidderDb = testEnv.authenticatedContext('user_bidder_200').firestore();
+  await assert.rejects(
+    () => bidderDb.collection('arena_auctions').doc('auc_expired_bid').update({
+      currentBid: 550,
+      highestBidderId: 'user_bidder_200',
+      bidsCount: 1,
+      userBidCounts: { user_bidder_200: 1 },
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 14: Unauthenticated counter increment denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_counter_unauth').set({
+      title: 'Counter Unauth Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      viewsCount: 0,
+      userViewCounts: {},
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  await assert.rejects(
+    () => unauthDb.collection('arena_auctions').doc('auc_counter_unauth').update({
+      viewsCount: 1,
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 15: Valid seller lifecycle operation (Pause active auction) allowed', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_lifecycle_pause').set({
+      title: 'Pauseable Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      bidsCount: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_lifecycle_pause').update({
+      status: 'paused',
+      isPaused: true,
+      isPausedBySeller: true,
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 16: Winning-bidder settlement past endTime allowed', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_settle_win').set({
+      title: 'Settle Win Item',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.doesNotReject(
+    () => winnerDb.collection('arena_auctions').doc('auc_settle_win').update({
+      status: 'sold',
+      orderId: 'ord_settle_123',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 17: Non-winning bidder settlement past endTime denied', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_settle_nonwin').set({
+      title: 'Settle Nonwin Item',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const attackerDb = testEnv.authenticatedContext('user_attacker_999').firestore();
+  await assert.rejects(
+    () => attackerDb.collection('arena_auctions').doc('auc_settle_nonwin').update({
+      status: 'sold',
+      orderId: 'ord_settle_123',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 18: Winning-bidder settlement before endTime denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_settle_early').set({
+      title: 'Settle Early Item',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_settle_early').update({
+      status: 'sold',
+      orderId: 'ord_settle_123',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 19: Valid upcoming-draft editing by seller allowed', async () => {
+  const futureStart = new Date(Date.now() + 3600 * 1000);
+  const futureEnd = new Date(Date.now() + 7200 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_draft_valid').set({
+      title: 'Initial Draft Title',
+      startingPrice: 200,
+      currentBid: 200,
+      status: 'upcoming',
+      sellerId: 'user_seller_100',
+      highestBidderId: '',
+      bidsCount: 0,
+      startTime: futureStart,
+      endTime: futureEnd,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_draft_valid').update({
+      title: 'Updated Draft Title',
+      startingPrice: 300,
+      currentBid: 300,
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 20: Draft editing on active auction denied', async () => {
+  const futureEnd = new Date(Date.now() + 7200 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_draft_on_active').set({
+      title: 'Active Item',
+      startingPrice: 200,
+      currentBid: 200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: '',
+      bidsCount: 0,
+      startTime: serverTimestamp(),
+      endTime: futureEnd,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_draft_on_active').update({
+      title: 'Hijacked Title',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 21: Non-seller draft editing denied', async () => {
+  const futureStart = new Date(Date.now() + 3600 * 1000);
+  const futureEnd = new Date(Date.now() + 7200 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_draft_nonseller').set({
+      title: 'Seller Draft Item',
+      startingPrice: 200,
+      currentBid: 200,
+      status: 'upcoming',
+      sellerId: 'user_seller_100',
+      highestBidderId: '',
+      bidsCount: 0,
+      startTime: futureStart,
+      endTime: futureEnd,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const attackerDb = testEnv.authenticatedContext('user_attacker_999').firestore();
+  await assert.rejects(
+    () => attackerDb.collection('arena_auctions').doc('auc_draft_nonseller').update({
+      title: 'Attacker Tampered Title',
+      startingPrice: 50,
+      currentBid: 50,
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 22: Mixed-operation tampering (bid + counter fields) denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_mixed_bid_counter').set({
+      title: 'Mixed Bid Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      viewsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const bidderDb = testEnv.authenticatedContext('user_bidder_200').firestore();
+  await assert.rejects(
+    () => bidderDb.collection('arena_auctions').doc('auc_mixed_bid_counter').update({
+      currentBid: 550,
+      highestBidderId: 'user_bidder_200',
+      bidsCount: 1,
+      userBidCounts: { user_bidder_200: 1 },
+      viewsCount: 10,
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 23: Mixed-operation tampering (lifecycle + unwhitelisted price manipulation) denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_mixed_lifecycle_price').set({
+      title: 'Lifecycle Price Tamper',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      bidsCount: 0,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_mixed_lifecycle_price').update({
+      status: 'paused',
+      startingPrice: 9999,
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+

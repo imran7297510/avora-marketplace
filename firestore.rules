@@ -1408,6 +1408,10 @@ service cloud.firestore {
         isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && (
           // Action 1: Legitimate Bid (Non-seller bidder on active, non-expired auction)
           (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',
+              'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'
+            ]) &&
             existing().status == 'active' &&
             request.time < existing().endTime &&
             !isAuctionSeller() &&
@@ -1425,11 +1429,7 @@ service cloud.firestore {
             incoming().get('userBidCounts', {}).get(request.auth.uid, 0) == existing().get('userBidCounts', {}).get(request.auth.uid, 0) + 1 &&
             incoming().get('userBidCounts', {}).diff(existing().get('userBidCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
             incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&
-            (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm'))) &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',
-              'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'
-            ])
+            (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm')))
           ) ||
           // Action 2: View/Watch counter increments
           (
@@ -1508,7 +1508,6 @@ service cloud.firestore {
           ) ||
           // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)
           (
-            isAuctionSeller() &&
             incoming().diff(existing()).affectedKeys().hasOnly([
               'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
               'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
@@ -1516,6 +1515,7 @@ service cloud.firestore {
               'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
               'startTime', 'endTime'
             ]) &&
+            isAuctionSeller() &&
             incoming().currentBid == existing().currentBid &&
             incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
             incoming().sellerId == existing().sellerId &&
@@ -1568,6 +1568,7 @@ service cloud.firestore {
           ) ||
           // Action 4: Client Settlement by Winning Bidder past endTime
           (
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&
             request.auth.uid == existing().get('highestBidderId', '') &&
             existing().status == 'active' &&
             request.time >= existing().endTime &&
@@ -1576,13 +1577,12 @@ service cloud.firestore {
             incoming().highestBidderId == existing().highestBidderId &&
             incoming().sellerId == existing().sellerId &&
             incoming().startTime == existing().startTime &&
-            incoming().endTime == existing().endTime &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt'])
+            incoming().endTime == existing().endTime
           ) ||
           // Action 5: Full Update for upcoming draft auctions (Owner only)
           (
-            isAuctionSeller() &&
             existing().status == 'upcoming' &&
+            isAuctionSeller() &&
             incoming().status == 'upcoming' &&
             incoming().sellerId == existing().sellerId &&
             incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
