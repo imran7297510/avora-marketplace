@@ -643,3 +643,126 @@ test('Arena Auctions 8: Invalid terminal auction lifecycle transition (sold -> a
     isPermissionDenied
   );
 });
+
+test('Arena Auctions 9: Below-minimum bid increment denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_below_min').set({
+      title: 'Below Min Increment Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const bidderDb = testEnv.authenticatedContext('user_bidder_200').firestore();
+  await assert.rejects(
+    () => bidderDb.collection('arena_auctions').doc('auc_below_min').update({
+      currentBid: 525,
+      highestBidderId: 'user_bidder_200',
+      bidsCount: 1,
+      userBidCounts: { user_bidder_200: 1 },
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 10: Bid update with unwhitelisted field (minIncrement) denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_unwhitelisted_key').set({
+      title: 'Whitelist Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      minIncrement: 50,
+      bidsCount: 0,
+      userBidCounts: {}
+    });
+  });
+
+  const bidderDb = testEnv.authenticatedContext('user_bidder_200').firestore();
+  await assert.rejects(
+    () => bidderDb.collection('arena_auctions').doc('auc_unwhitelisted_key').update({
+      currentBid: 550,
+      highestBidderId: 'user_bidder_200',
+      bidsCount: 1,
+      userBidCounts: { user_bidder_200: 1 },
+      updatedAt: serverTimestamp(),
+      minIncrement: 1
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 11: Invalid view-counter jump (+10 instead of +1) denied', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_counter_jump').set({
+      title: 'Counter Jump Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      viewsCount: 0,
+      userViewCounts: {},
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const viewerDb = testEnv.authenticatedContext('user_viewer_300').firestore();
+  await assert.rejects(
+    () => viewerDb.collection('arena_auctions').doc('auc_counter_jump').update({
+      viewsCount: 10,
+      userViewCounts: { user_viewer_300: 10 },
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 12: Legitimate view-counter increment (+1) by viewer allowed', async () => {
+  const futureTime = new Date(Date.now() + 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_counter_valid').set({
+      title: 'Valid Counter Item',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: futureTime,
+      viewsCount: 0,
+      userViewCounts: {},
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const viewerDb = testEnv.authenticatedContext('user_viewer_300').firestore();
+  await assert.doesNotReject(
+    () => viewerDb.collection('arena_auctions').doc('auc_counter_valid').update({
+      viewsCount: 1,
+      userViewCounts: { user_viewer_300: 1 },
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
