@@ -35,8 +35,18 @@ jobs:
 
       - name: Run Firestore Rules Tests via Emulator
         run: |
+          set -o pipefail
+          set +e
           npx firebase-tools@15.29.0 emulators:exec --only firestore \
             --project demo-avora-security-ci \
-            "npm run test:rules"
+            "npm run test:rules" 2>&1 | tee emulator.log
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          if grep -i -E -q "maximum of 1000 expressions|1000 expressions to evaluate" emulator.log; then
+            echo "::error::Expression-limit failure detected in emulator logs!"
+            grep -i -E -n "maximum of 1000 expressions|1000 expressions to evaluate" emulator.log
+            exit 1
+          fi
+          exit $TEST_EXIT_CODE
         env:
           FIRESTORE_EMULATOR_HOST: "127.0.0.1:8085"

@@ -46,8 +46,44 @@ beforeEach(async () => {
 });
 
 function isPermissionDenied(err: any) {
-  return err.code === 'permission-denied' || /permission-denied/i.test(err.message);
+  const message = String(err?.message || '');
+  if (
+    message.includes('1000 expressions') ||
+    message.includes('maximum of 1000') ||
+    /1000\s+expressions/i.test(message)
+  ) {
+    throw new Error(
+      `FALSE CONFIDENCE DETECTED: Operation denied due to rules expression limit, not security rules: ${message}`
+    );
+  }
+  return err?.code === 'permission-denied' || /permission-denied/i.test(message);
 }
+
+test('Test Harness: isPermissionDenied detects and rejects expression-limit failure', () => {
+  const simulatedLimitError = new Error(
+    '7 PERMISSION_DENIED: Unable to evaluate the expression as the maximum of 1000 expressions to evaluate has been reached.'
+  );
+  (simulatedLimitError as any).code = 'permission-denied';
+
+  assert.throws(
+    () => isPermissionDenied(simulatedLimitError),
+    /FALSE CONFIDENCE DETECTED: Operation denied due to rules expression limit/
+  );
+});
+
+test('Test Harness: isPermissionDenied accepts genuine permission denial', () => {
+  const cleanError = new Error('7 PERMISSION_DENIED: False for \'update\' on /arena_auctions/auc1');
+  (cleanError as any).code = 'permission-denied';
+
+  assert.strictEqual(isPermissionDenied(cleanError), true);
+});
+
+test('Test Harness: isPermissionDenied does not misclassify unrelated evaluation errors', () => {
+  const unrelatedError = new Error('7 PERMISSION_DENIED: evaluation error: property foo does not exist on null');
+  (unrelatedError as any).code = 'permission-denied';
+
+  assert.strictEqual(isPermissionDenied(unrelatedError), true);
+});
 
 // ==========================================
 // EXISTING 18 OFFER-SECURITY & NEGOTIATION TESTS
