@@ -1,0 +1,2023 @@
+[33mcommit 1e4a9c774db8950909af7e412ceb23d5909e5208[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfix/arena-offers-expression-limit[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m
+Author: imran7297510 <122411375+imran7297510@users.noreply.github.com>
+Date:   Thu Oct 15 20:48:58 2026 +0000
+
+    Revert "c516c2e"
+    
+    This reverts commit 3ff5c57481320c6da185ee031b14f31397f948a4.
+
+[1mdiff --git a/firestore.rules b/firestore.rules[m
+[1mindex 2a9d2a5..a95ab69 100644[m
+[1m--- a/firestore.rules[m
+[1m+++ b/firestore.rules[m
+[36m@@ -1394,17 +1394,6 @@[m [mservice cloud.firestore {[m
+         );[m
+       }[m
+ [m
+[31m-      function isAuctionUserActive() {[m
+[31m-        return isSignedIn() && ([m
+[31m-          !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||[m
+[31m-          ([m
+[31m-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false &&[m
+[31m-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == false &&[m
+[31m-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountStatus', 'active') != 'banned'[m
+[31m-          )[m
+[31m-        );[m
+[31m-      }[m
+[31m-[m
+       allow read: if true;[m
+       allow create: if isNotBlocked() && isValidAuction(incoming()) && ([m
+         (incoming().get('isNegotiationOnly', false) == false && incoming().sellerId == request.auth.uid) ||[m
+[36m@@ -1416,15 +1405,14 @@[m [mservice cloud.firestore {[m
+       );[m
+       allow delete: if isAdmin() || (isSignedIn() && isAuctionSeller());[m
+       allow update: if isAdmin() || ([m
+[31m-        isAuctionUserActive() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && ([m
+[31m-          // ROUTE 1: Bidding (Active auction modifying currentBid or highestBidder)[m
+[32m+[m[32m        isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && ([m
+[32m+[m[32m          // Action 1: Legitimate Bid (Non-seller bidder on active, non-expired auction)[m
+           ([m
+[31m-            existing().status == 'active' &&[m
+[31m-            incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'highestBidderId', 'bidsCount']) &&[m
+             incoming().diff(existing()).affectedKeys().hasOnly([[m
+               'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',[m
+               'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'[m
+             ]) &&[m
+[32m+[m[32m            existing().status == 'active' &&[m
+             request.time < existing().endTime &&[m
+             !isAuctionSeller() &&[m
+             incoming().status == existing().status &&[m
+[36m@@ -1443,212 +1431,169 @@[m [mservice cloud.firestore {[m
+             incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&[m
+             (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm')))[m
+           ) ||[m
+[31m-          // ROUTE 2: Status Lifecycle Transitions & Winning-Bidder Settlement[m
+[32m+[m[32m          // Action 2: View/Watch counter increments[m
+           ([m
+[31m-            incoming().status != existing().status && ([m
+[31m-              // Route 2A: Seller Lifecycle Status Changes[m
+[32m+[m[32m            isSignedIn() &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'[m
+[32m+[m[32m            ]) &&[m
+[32m+[m[32m            incoming().status == existing().status &&[m
+[32m+[m[32m            incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m            incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m            incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m            incoming().startTime == existing().startTime &&[m
+[32m+[m[32m            incoming().endTime == existing().endTime &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||[m
+[32m+[m[32m              ([m
+[32m+[m[32m                incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&[m
+[32m+[m[32m                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[32m+[m[32m              )[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||[m
+[32m+[m[32m              ([m
+[32m+[m[32m                incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&[m
+[32m+[m[32m                incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1[m
+[32m+[m[32m              )[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||[m
+               ([m
+[31m-                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[31m-                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', [m
+[31m-                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[31m-                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[31m-                  'startTime', 'endTime'[m
+[31m-                ]) &&[m
+[31m-                isAuctionSeller() &&[m
+[31m-                incoming().currentBid == existing().currentBid &&[m
+[31m-                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().startingPrice == existing().startingPrice &&[m
+[31m-                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+                 ([m
+[31m-                  // Go Live[m
+[31m-                  ([m
+[31m-                    incoming().status == 'active' &&[m
+[31m-                    existing().status == 'upcoming' &&[m
+[31m-                    incoming().startTime >= request.time - duration.value(5, 'm') &&[m
+[31m-                    incoming().endTime > incoming().startTime[m
+[31m-                  ) ||[m
+[31m-                  // Pause[m
+[31m-                  ([m
+[31m-                    incoming().status == 'paused' &&[m
+[31m-                    existing().status == 'active' &&[m
+[31m-                    incoming().startTime == existing().startTime &&[m
+[31m-                    incoming().endTime == existing().endTime[m
+[31m-                  ) ||[m
+[31m-                  // Resume[m
+[31m-                  ([m
+[31m-                    incoming().status == 'active' &&[m
+[31m-                    existing().status == 'paused' &&[m
+[31m-                    incoming().startTime == existing().startTime &&[m
+[31m-                    incoming().endTime > request.time[m
+[31m-                  ) ||[m
+[31m-                  // Cancel[m
+[31m-                  ([m
+[31m-                    incoming().status == 'cancelled' &&[m
+[31m-                    existing().status in ['upcoming', 'active', 'paused'] &&[m
+[31m-                    incoming().startTime == existing().startTime &&[m
+[31m-                    incoming().endTime == existing().endTime[m
+[31m-                  ) ||[m
+[31m-                  // Settlement by Seller past endTime[m
+[32m+[m[32m                  existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[32m+[m[32m                  incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)[m
+[32m+[m[32m                ) ||[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+                   ([m
+[31m-                    incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[31m-                    existing().status == 'active' &&[m
+[31m-                    request.time >= existing().endTime &&[m
+[31m-                    incoming().startTime == existing().startTime &&[m
+[31m-                    incoming().endTime == existing().endTime[m
+[32m+[m[32m                    incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||[m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&[m
+[32m+[m[32m                      incoming().get('viewerUserIds', []).hasAny([request.auth.uid])[m
+[32m+[m[32m                    )[m
+                   )[m
+                 )[m
+[31m-              ) ||[m
+[31m-              // Route 2B: Client Settlement by Winning Bidder past endTime[m
+[32m+[m[32m              )[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||[m
+               ([m
+[31m-                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&[m
+[31m-                request.auth.uid == existing().get('highestBidderId', '') &&[m
+[31m-                existing().status == 'active' &&[m
+[31m-                request.time >= existing().endTime &&[m
+[31m-                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[31m-                incoming().currentBid == existing().currentBid &&[m
+[31m-                incoming().highestBidderId == existing().highestBidderId &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().startTime == existing().startTime &&[m
+[31m-                incoming().endTime == existing().endTime[m
+[32m+[m[32m                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[32m+[m[32m              )[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||[m
+[32m+[m[32m              ([m
+[32m+[m[32m                ([m
+[32m+[m[32m                  incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&[m
+[32m+[m[32m                  !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[32m+[m[32m                  existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[32m+[m[32m                ) ||[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  incoming().watchersCount >= 0 &&[m
+[32m+[m[32m                  incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&[m
+[32m+[m[32m                  exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[32m+[m[32m                  !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[32m+[m[32m                ) ||[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  incoming().watchersCount == existing().get('watchersCount', 0)[m
+[32m+[m[32m                )[m
+               )[m
+             )[m
+           ) ||[m
+[31m-          // ROUTE 3: Upcoming Draft Editing & Draft Metadata[m
+[32m+[m[32m          // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)[m
+           ([m
+[31m-            existing().status == 'upcoming' && incoming().status == 'upcoming' &&[m
+[31m-            !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount', 'watchersCount', 'viewerUserIds', 'uniqueViewersCount']) && ([m
+[31m-              // Route 3A: Full draft content editing by seller[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[32m+[m[32m              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt',[m[41m [m
+[32m+[m[32m              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[32m+[m[32m              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[32m+[m[32m              'startTime', 'endTime'[m
+[32m+[m[32m            ]) &&[m
+[32m+[m[32m            isAuctionSeller() &&[m
+[32m+[m[32m            incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m            incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m            incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m            incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              // Go Live[m
+[32m+[m[32m              ([m
+[32m+[m[32m                incoming().status == 'active' &&[m
+[32m+[m[32m                existing().status == 'upcoming' &&[m
+[32m+[m[32m                incoming().startTime >= request.time - duration.value(5, 'm') &&[m
+[32m+[m[32m                incoming().endTime > incoming().startTime[m
+[32m+[m[32m              ) ||[m
+[32m+[m[32m              // Pause[m
+               ([m
+[31m-                isAuctionSeller() &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&[m
+[31m-                incoming().currentBid == incoming().startingPrice &&[m
+[31m-                incoming().get('highestBidderId', '') == '' &&[m
+[31m-                incoming().get('bidsCount', 0) == 0 &&[m
+[31m-                existing().get('bidsCount', 0) == 0 &&[m
+[31m-                !incoming().diff(existing()).affectedKeys().hasAny([[m
+[31m-                  'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'[m
+[31m-                ]) &&[m
+[31m-                isValidAuction(incoming())[m
+[32m+[m[32m                incoming().status == 'paused' &&[m
+[32m+[m[32m                existing().status == 'active' &&[m
+[32m+[m[32m                incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                incoming().endTime == existing().endTime[m
+[32m+[m[32m              ) ||[m
+[32m+[m[32m              // Resume[m
+[32m+[m[32m              ([m
+[32m+[m[32m                incoming().status == 'active' &&[m
+[32m+[m[32m                existing().status == 'paused' &&[m
+[32m+[m[32m                incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                incoming().endTime > request.time[m
+               ) ||[m
+[31m-              // Route 3B: Upcoming draft metadata update[m
+[32m+[m[32m              // Cancel[m
+               ([m
+[31m-                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[31m-                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', [m
+[31m-                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[31m-                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[31m-                  'startTime', 'endTime'[m
+[31m-                ]) &&[m
+[31m-                isAuctionSeller() &&[m
+[31m-                incoming().currentBid == existing().currentBid &&[m
+[31m-                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().startingPrice == existing().startingPrice &&[m
+[31m-                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+[32m+[m[32m                incoming().status == 'cancelled' &&[m
+[32m+[m[32m                existing().status in ['upcoming', 'active', 'paused'] &&[m
+                 incoming().startTime == existing().startTime &&[m
+                 incoming().endTime == existing().endTime[m
+[31m-              )[m
+[31m-            )[m
+[31m-          ) ||[m
+[31m-          // ROUTE 4: Counters & Active/Paused Same-Status Metadata[m
+[31m-          ([m
+[31m-            incoming().status == existing().status && ([m
+[31m-              // Route 4A: View/Watch Counter increments[m
+[32m+[m[32m              ) ||[m
+[32m+[m[32m              // Settlement by Seller past endTime[m
+               ([m
+[31m-                isSignedIn() &&[m
+[31m-                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-                  'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'[m
+[31m-                ]) &&[m
+[31m-                incoming().currentBid == existing().currentBid &&[m
+[31m-                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[32m+[m[32m                existing().status == 'active' &&[m
+[32m+[m[32m                request.time >= existing().endTime &&[m
+                 incoming().startTime == existing().startTime &&[m
+[31m-                incoming().endTime == existing().endTime &&[m
+[31m-                ([m
+[31m-                  !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||[m
+[31m-                  ([m
+[31m-                    incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&[m
+[31m-                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[31m-                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[31m-                  )[m
+[31m-                ) &&[m
+[31m-                ([m
+[31m-                  !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||[m
+[31m-                  ([m
+[31m-                    incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&[m
+[31m-                    incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&[m
+[31m-                    incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1[m
+[31m-                  )[m
+[31m-                ) &&[m
+[31m-                ([m
+[31m-                  !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||[m
+[31m-                  ([m
+[31m-                    ([m
+[31m-                      existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[31m-                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)[m
+[31m-                    ) ||[m
+[31m-                    ([m
+[31m-                      !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[31m-                      ([m
+[31m-                        incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||[m
+[31m-                        ([m
+[31m-                          incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&[m
+[31m-                          incoming().get('viewerUserIds', []).hasAny([request.auth.uid])[m
+[31m-                        )[m
+[31m-                      )[m
+[31m-                    )[m
+[31m-                  )[m
+[31m-                ) &&[m
+[31m-                ([m
+[31m-                  !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||[m
+[31m-                  ([m
+[31m-                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[31m-                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[31m-                  )[m
+[31m-                ) &&[m
+[31m-                ([m
+[31m-                  !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||[m
+[31m-                  ([m
+[31m-                    ([m
+[31m-                      incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&[m
+[31m-                      !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[31m-                      existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[31m-                    ) ||[m
+[31m-                    ([m
+[31m-                      incoming().watchersCount >= 0 &&[m
+[31m-                      incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&[m
+[31m-                      exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[31m-                      !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[31m-                    ) ||[m
+[31m-                    ([m
+[31m-                      incoming().watchersCount == existing().get('watchersCount', 0)[m
+[31m-                    )[m
+[31m-                  )[m
+[31m-                )[m
+[32m+[m[32m                incoming().endTime == existing().endTime[m
+               ) ||[m
+[31m-              // Route 4B: Same-status metadata update by Seller (active/paused)[m
+[32m+[m[32m              // Metadata update in same status[m
+               ([m
+[31m-                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[31m-                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', [m
+[31m-                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[31m-                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[31m-                  'startTime', 'endTime'[m
+[31m-                ]) &&[m
+[31m-                isAuctionSeller() &&[m
+[31m-                incoming().currentBid == existing().currentBid &&[m
+[31m-                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-                incoming().sellerId == existing().sellerId &&[m
+[31m-                incoming().startingPrice == existing().startingPrice &&[m
+[31m-                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+[32m+[m[32m                incoming().status == existing().status &&[m
+                 incoming().startTime == existing().startTime &&[m
+                 incoming().endTime == existing().endTime[m
+               )[m
+             )[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Action 4: Client Settlement by Winning Bidder past endTime[m
+[32m+[m[32m          ([m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&[m
+[32m+[m[32m            request.auth.uid == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m            existing().status == 'active' &&[m
+[32m+[m[32m            request.time >= existing().endTime &&[m
+[32m+[m[32m            incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[32m+[m[32m            incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m            incoming().highestBidderId == existing().highestBidderId &&[m
+[32m+[m[32m            incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m            incoming().startTime == existing().startTime &&[m
+[32m+[m[32m            incoming().endTime == existing().endTime[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Action 5: Full Update for upcoming draft auctions (Owner only)[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().status == 'upcoming' &&[m
+[32m+[m[32m            isAuctionSeller() &&[m
+[32m+[m[32m            incoming().status == 'upcoming' &&[m
+[32m+[m[32m            incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&[m
+[32m+[m[32m            incoming().currentBid == incoming().startingPrice &&[m
+[32m+[m[32m            incoming().get('highestBidderId', '') == '' &&[m
+[32m+[m[32m            incoming().get('bidsCount', 0) == 0 &&[m
+[32m+[m[32m            existing().get('bidsCount', 0) == 0 &&[m
+[32m+[m[32m            !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m              'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'[m
+[32m+[m[32m            ]) &&[m
+[32m+[m[32m            isValidAuction(incoming())[m
+           )[m
+         )[m
+       );[m
+
+[33mcommit 3ff5c57481320c6da185ee031b14f31397f948a4[m
+Author: imran7297510 <122411375+imran7297510@users.noreply.github.com>
+Date:   Fri Oct 16 00:50:18 2026 +0500
+
+    c516c2e
+
+[1mdiff --git a/firestore.rules b/firestore.rules[m
+[1mindex a95ab69..2a9d2a5 100644[m
+[1m--- a/firestore.rules[m
+[1m+++ b/firestore.rules[m
+[36m@@ -1394,6 +1394,17 @@[m [mservice cloud.firestore {[m
+         );[m
+       }[m
+ [m
+[32m+[m[32m      function isAuctionUserActive() {[m
+[32m+[m[32m        return isSignedIn() && ([m
+[32m+[m[32m          !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||[m
+[32m+[m[32m          ([m
+[32m+[m[32m            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false &&[m
+[32m+[m[32m            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == false &&[m
+[32m+[m[32m            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountStatus', 'active') != 'banned'[m
+[32m+[m[32m          )[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m
+       allow read: if true;[m
+       allow create: if isNotBlocked() && isValidAuction(incoming()) && ([m
+         (incoming().get('isNegotiationOnly', false) == false && incoming().sellerId == request.auth.uid) ||[m
+[36m@@ -1405,14 +1416,15 @@[m [mservice cloud.firestore {[m
+       );[m
+       allow delete: if isAdmin() || (isSignedIn() && isAuctionSeller());[m
+       allow update: if isAdmin() || ([m
+[31m-        isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && ([m
+[31m-          // Action 1: Legitimate Bid (Non-seller bidder on active, non-expired auction)[m
+[32m+[m[32m        isAuctionUserActive() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && ([m
+[32m+[m[32m          // ROUTE 1: Bidding (Active auction modifying currentBid or highestBidder)[m
+           ([m
+[32m+[m[32m            existing().status == 'active' &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'highestBidderId', 'bidsCount']) &&[m
+             incoming().diff(existing()).affectedKeys().hasOnly([[m
+               'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',[m
+               'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'[m
+             ]) &&[m
+[31m-            existing().status == 'active' &&[m
+             request.time < existing().endTime &&[m
+             !isAuctionSeller() &&[m
+             incoming().status == existing().status &&[m
+[36m@@ -1431,169 +1443,212 @@[m [mservice cloud.firestore {[m
+             incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&[m
+             (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm')))[m
+           ) ||[m
+[31m-          // Action 2: View/Watch counter increments[m
+[32m+[m[32m          // ROUTE 2: Status Lifecycle Transitions & Winning-Bidder Settlement[m
+           ([m
+[31m-            isSignedIn() &&[m
+[31m-            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'[m
+[31m-            ]) &&[m
+[31m-            incoming().status == existing().status &&[m
+[31m-            incoming().currentBid == existing().currentBid &&[m
+[31m-            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-            incoming().sellerId == existing().sellerId &&[m
+[31m-            incoming().startingPrice == existing().startingPrice &&[m
+[31m-            incoming().startTime == existing().startTime &&[m
+[31m-            incoming().endTime == existing().endTime &&[m
+[31m-            ([m
+[31m-              !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||[m
+[32m+[m[32m            incoming().status != existing().status && ([m
+[32m+[m[32m              // Route 2A: Seller Lifecycle Status Changes[m
+               ([m
+[31m-                incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&[m
+[31m-                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[31m-                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[31m-              )[m
+[31m-            ) &&[m
+[31m-            ([m
+[31m-              !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||[m
+[31m-              ([m
+[31m-                incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&[m
+[31m-                incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&[m
+[31m-                incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1[m
+[31m-              )[m
+[31m-            ) &&[m
+[31m-            ([m
+[31m-              !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||[m
+[31m-              ([m
+[31m-                ([m
+[31m-                  existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[31m-                  incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)[m
+[31m-                ) ||[m
+[32m+[m[32m                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[32m+[m[32m                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt',[m[41m [m
+[32m+[m[32m                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[32m+[m[32m                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[32m+[m[32m                  'startTime', 'endTime'[m
+[32m+[m[32m                ]) &&[m
+[32m+[m[32m                isAuctionSeller() &&[m
+[32m+[m[32m                incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m                incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+                 ([m
+[31m-                  !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[32m+[m[32m                  // Go Live[m
+                   ([m
+[31m-                    incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||[m
+[31m-                    ([m
+[31m-                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&[m
+[31m-                      incoming().get('viewerUserIds', []).hasAny([request.auth.uid])[m
+[31m-                    )[m
+[32m+[m[32m                    incoming().status == 'active' &&[m
+[32m+[m[32m                    existing().status == 'upcoming' &&[m
+[32m+[m[32m                    incoming().startTime >= request.time - duration.value(5, 'm') &&[m
+[32m+[m[32m                    incoming().endTime > incoming().startTime[m
+[32m+[m[32m                  ) ||[m
+[32m+[m[32m                  // Pause[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().status == 'paused' &&[m
+[32m+[m[32m                    existing().status == 'active' &&[m
+[32m+[m[32m                    incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                    incoming().endTime == existing().endTime[m
+[32m+[m[32m                  ) ||[m
+[32m+[m[32m                  // Resume[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().status == 'active' &&[m
+[32m+[m[32m                    existing().status == 'paused' &&[m
+[32m+[m[32m                    incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                    incoming().endTime > request.time[m
+[32m+[m[32m                  ) ||[m
+[32m+[m[32m                  // Cancel[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().status == 'cancelled' &&[m
+[32m+[m[32m                    existing().status in ['upcoming', 'active', 'paused'] &&[m
+[32m+[m[32m                    incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                    incoming().endTime == existing().endTime[m
+[32m+[m[32m                  ) ||[m
+[32m+[m[32m                  // Settlement by Seller past endTime[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[32m+[m[32m                    existing().status == 'active' &&[m
+[32m+[m[32m                    request.time >= existing().endTime &&[m
+[32m+[m[32m                    incoming().startTime == existing().startTime &&[m
+[32m+[m[32m                    incoming().endTime == existing().endTime[m
+                   )[m
+                 )[m
+[31m-              )[m
+[31m-            ) &&[m
+[31m-            ([m
+[31m-              !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||[m
+[31m-              ([m
+[31m-                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[31m-                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[31m-              )[m
+[31m-            ) &&[m
+[31m-            ([m
+[31m-              !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||[m
+[31m-              ([m
+[31m-                ([m
+[31m-                  incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&[m
+[31m-                  !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[31m-                  existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[31m-                ) ||[m
+[31m-                ([m
+[31m-                  incoming().watchersCount >= 0 &&[m
+[31m-                  incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&[m
+[31m-                  exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[31m-                  !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[31m-                ) ||[m
+[31m-                ([m
+[31m-                  incoming().watchersCount == existing().get('watchersCount', 0)[m
+[31m-                )[m
+[31m-              )[m
+[31m-            )[m
+[31m-          ) ||[m
+[31m-          // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)[m
+[31m-          ([m
+[31m-            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[31m-              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[31m-              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', [m
+[31m-              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[31m-              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[31m-              'startTime', 'endTime'[m
+[31m-            ]) &&[m
+[31m-            isAuctionSeller() &&[m
+[31m-            incoming().currentBid == existing().currentBid &&[m
+[31m-            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[31m-            incoming().sellerId == existing().sellerId &&[m
+[31m-            incoming().startingPrice == existing().startingPrice &&[m
+[31m-            incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+[31m-            ([m
+[31m-              // Go Live[m
+[31m-              ([m
+[31m-                incoming().status == 'active' &&[m
+[31m-                existing().status == 'upcoming' &&[m
+[31m-                incoming().startTime >= request.time - duration.value(5, 'm') &&[m
+[31m-                incoming().endTime > incoming().startTime[m
+               ) ||[m
+[31m-              // Pause[m
+[32m+[m[32m              // Route 2B: Client Settlement by Winning Bidder past endTime[m
+               ([m
+[31m-                incoming().status == 'paused' &&[m
+[32m+[m[32m                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&[m
+[32m+[m[32m                request.auth.uid == existing().get('highestBidderId', '') &&[m
+                 existing().status == 'active' &&[m
+[32m+[m[32m                request.time >= existing().endTime &&[m
+[32m+[m[32m                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[32m+[m[32m                incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m                incoming().highestBidderId == existing().highestBidderId &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+                 incoming().startTime == existing().startTime &&[m
+                 incoming().endTime == existing().endTime[m
+[31m-              ) ||[m
+[31m-              // Resume[m
+[32m+[m[32m              )[m
+[32m+[m[32m            )[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // ROUTE 3: Upcoming Draft Editing & Draft Metadata[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().status == 'upcoming' && incoming().status == 'upcoming' &&[m
+[32m+[m[32m            !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount', 'watchersCount', 'viewerUserIds', 'uniqueViewersCount']) && ([m
+[32m+[m[32m              // Route 3A: Full draft content editing by seller[m
+               ([m
+[31m-                incoming().status == 'active' &&[m
+[31m-                existing().status == 'paused' &&[m
+[31m-                incoming().startTime == existing().startTime &&[m
+[31m-                incoming().endTime > request.time[m
+[32m+[m[32m                isAuctionSeller() &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m                incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&[m
+[32m+[m[32m                incoming().currentBid == incoming().startingPrice &&[m
+[32m+[m[32m                incoming().get('highestBidderId', '') == '' &&[m
+[32m+[m[32m                incoming().get('bidsCount', 0) == 0 &&[m
+[32m+[m[32m                existing().get('bidsCount', 0) == 0 &&[m
+[32m+[m[32m                !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m                  'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'[m
+[32m+[m[32m                ]) &&[m
+[32m+[m[32m                isValidAuction(incoming())[m
+               ) ||[m
+[31m-              // Cancel[m
+[32m+[m[32m              // Route 3B: Upcoming draft metadata update[m
+               ([m
+[31m-                incoming().status == 'cancelled' &&[m
+[31m-                existing().status in ['upcoming', 'active', 'paused'] &&[m
+[32m+[m[32m                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[32m+[m[32m                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt',[m[41m [m
+[32m+[m[32m                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[32m+[m[32m                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[32m+[m[32m                  'startTime', 'endTime'[m
+[32m+[m[32m                ]) &&[m
+[32m+[m[32m                isAuctionSeller() &&[m
+[32m+[m[32m                incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m                incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+                 incoming().startTime == existing().startTime &&[m
+                 incoming().endTime == existing().endTime[m
+[31m-              ) ||[m
+[31m-              // Settlement by Seller past endTime[m
+[32m+[m[32m              )[m
+[32m+[m[32m            )[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // ROUTE 4: Counters & Active/Paused Same-Status Metadata[m
+[32m+[m[32m          ([m
+[32m+[m[32m            incoming().status == existing().status && ([m
+[32m+[m[32m              // Route 4A: View/Watch Counter increments[m
+               ([m
+[31m-                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[31m-                existing().status == 'active' &&[m
+[31m-                request.time >= existing().endTime &&[m
+[32m+[m[32m                isSignedIn() &&[m
+[32m+[m[32m                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                  'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'[m
+[32m+[m[32m                ]) &&[m
+[32m+[m[32m                incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m                incoming().startingPrice == existing().startingPrice &&[m
+                 incoming().startTime == existing().startTime &&[m
+[31m-                incoming().endTime == existing().endTime[m
+[32m+[m[32m                incoming().endTime == existing().endTime &&[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&[m
+[32m+[m[32m                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[32m+[m[32m                  )[m
+[32m+[m[32m                ) &&[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&[m
+[32m+[m[32m                    incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                    incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1[m
+[32m+[m[32m                  )[m
+[32m+[m[32m                ) &&[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[32m+[m[32m                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)[m
+[32m+[m[32m                    ) ||[m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&[m
+[32m+[m[32m                      ([m
+[32m+[m[32m                        incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||[m
+[32m+[m[32m                        ([m
+[32m+[m[32m                          incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&[m
+[32m+[m[32m                          incoming().get('viewerUserIds', []).hasAny([request.auth.uid])[m
+[32m+[m[32m                        )[m
+[32m+[m[32m                      )[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                  )[m
+[32m+[m[32m                ) &&[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&[m
+[32m+[m[32m                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1[m
+[32m+[m[32m                  )[m
+[32m+[m[32m                ) &&[m
+[32m+[m[32m                ([m
+[32m+[m[32m                  !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||[m
+[32m+[m[32m                  ([m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&[m
+[32m+[m[32m                      !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[32m+[m[32m                      existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[32m+[m[32m                    ) ||[m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      incoming().watchersCount >= 0 &&[m
+[32m+[m[32m                      incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&[m
+[32m+[m[32m                      exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&[m
+[32m+[m[32m                      !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))[m
+[32m+[m[32m                    ) ||[m
+[32m+[m[32m                    ([m
+[32m+[m[32m                      incoming().watchersCount == existing().get('watchersCount', 0)[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                  )[m
+[32m+[m[32m                )[m
+               ) ||[m
+[31m-              // Metadata update in same status[m
+[32m+[m[32m              // Route 4B: Same-status metadata update by Seller (active/paused)[m
+               ([m
+[31m-                incoming().status == existing().status &&[m
+[32m+[m[32m                incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[32m+[m[32m                  'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt',[m[41m [m
+[32m+[m[32m                  'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',[m
+[32m+[m[32m                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',[m
+[32m+[m[32m                  'startTime', 'endTime'[m
+[32m+[m[32m                ]) &&[m
+[32m+[m[32m                isAuctionSeller() &&[m
+[32m+[m[32m                incoming().currentBid == existing().currentBid &&[m
+[32m+[m[32m                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&[m
+[32m+[m[32m                incoming().sellerId == existing().sellerId &&[m
+[32m+[m[32m                incoming().startingPrice == existing().startingPrice &&[m
+[32m+[m[32m                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&[m
+                 incoming().startTime == existing().startTime &&[m
+                 incoming().endTime == existing().endTime[m
+               )[m
+             )[m
+[31m-          ) ||[m
+[31m-          // Action 4: Client Settlement by Winning Bidder past endTime[m
+[31m-          ([m
+[31m-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&[m
+[31m-            request.auth.uid == existing().get('highestBidderId', '') &&[m
+[31m-            existing().status == 'active' &&[m
+[31m-            request.time >= existing().endTime &&[m
+[31m-            incoming().status in ['sold', 'ended', 'reserve-not-met'] &&[m
+[31m-            incoming().currentBid == existing().currentBid &&[m
+[31m-            incoming().highestBidderId == existing().highestBidderId &&[m
+[31m-            incoming().sellerId == existing().sellerId &&[m
+[31m-            incoming().startTime == existing().startTime &&[m
+[31m-            incoming().endTime == existing().endTime[m
+[31m-          ) ||[m
+[31m-          // Action 5: Full Update for upcoming draft auctions (Owner only)[m
+[31m-          ([m
+[31m-            existing().status == 'upcoming' &&[m
+[31m-            isAuctionSeller() &&[m
+[31m-            incoming().status == 'upcoming' &&[m
+[31m-            incoming().sellerId == existing().sellerId &&[m
+[31m-            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&[m
+[31m-            incoming().currentBid == incoming().startingPrice &&[m
+[31m-            incoming().get('highestBidderId', '') == '' &&[m
+[31m-            incoming().get('bidsCount', 0) == 0 &&[m
+[31m-            existing().get('bidsCount', 0) == 0 &&[m
+[31m-            !incoming().diff(existing()).affectedKeys().hasAny([[m
+[31m-              'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'[m
+[31m-            ]) &&[m
+[31m-            isValidAuction(incoming())[m
+           )[m
+         )[m
+       );[m
+
+[33mcommit 1dc98ab194603e083a2bd715ae1d6c9479900a5f[m
+Author: imran7297510 <122411375+imran7297510@users.noreply.github.com>
+Date:   Fri Oct 2 16:04:52 2026 +0500
+
+    feat(project): initialize project structure
+    
+    - Add Firebase, Firestore, and ESLint configurations
+    - Implement Firestore security rules and schema definitions
+    - Set up environment variables and dependency management
+
+[1mdiff --git a/firestore.rules b/firestore.rules[m
+[1mnew file mode 100644[m
+[1mindex 0000000..c1cc320[m
+[1m--- /dev/null[m
+[1m+++ b/firestore.rules[m
+[36m@@ -0,0 +1,1205 @@[m
+[32m+[m[32mrules_version = '2';[m
+[32m+[m[32mservice cloud.firestore {[m
+[32m+[m[32m  match /databases/{database}/documents {[m
+[32m+[m[32m    // Global safety net[m
+[32m+[m[32m    match /{document=**} {[m
+[32m+[m[32m      allow read, write: if false;[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    // Primitives[m
+[32m+[m[32m    function incoming() { return request.resource.data; }[m
+[32m+[m[32m    function existing() { return resource.data; }[m
+[32m+[m[32m    function isSignedIn() { return request.auth != null; }[m
+[32m+[m[32m    function hasEmail() { return isSignedIn() && 'email' in request.auth.token; }[m
+[32m+[m[32m    function userEmail() { return request.auth.token.email.lower(); }[m
+[32m+[m
+[32m+[m[32m    function isSuper() {[m
+[32m+[m[32m      return isSignedIn() && ([m
+[32m+[m[32m        (hasEmail() && (userEmail() == "imran7297510@gmail.com" || userEmail() == "imran7297510@gmail")) ||[m
+[32m+[m[32m        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||[m
+[32m+[m[32m        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isSuperAdmin', false) == true)[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isAuthorizedAdmin() {[m
+[32m+[m[32m      return isSignedIn() && hasEmail() && exists(/databases/$(database)/documents/authorizedAdmins/$(userEmail()));[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isPaymentVerifier() {[m
+[32m+[m[32m      return isSignedIn() && hasEmail() && exists(/databases/$(database)/documents/authorizedPaymentVerifiers/$(userEmail()));[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isKycAdmin() {[m
+[32m+[m[32m      return isSuper() || isAuthorizedAdmin() || ([m
+[32m+[m[32m        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && ([m
+[32m+[m[32m          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isSuperAdmin', false) == true[m
+[32m+[m[32m        ))[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isAdmin() {[m
+[32m+[m[32m      return isKycAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isValidPromotionTransition(badgeType, reqId, listingId, ownerId) {[m
+[32m+[m[32m      let promoPath = /databases/$(database)/documents/promotionRequests/$(reqId);[m
+[32m+[m[32m      let beforeData = get(promoPath).data;[m
+[32m+[m[32m      let afterData = getAfter(promoPath).data;[m
+[32m+[m[32m      return afterData.targetId == listingId &&[m
+[32m+[m[32m        afterData.type == badgeType &&[m
+[32m+[m[32m        afterData.userId == ownerId &&[m
+[32m+[m[32m        afterData.status == 'APPROVED' &&[m
+[32m+[m[32m        ('expiresAt' in afterData) &&[m
+[32m+[m[32m        afterData.expiresAt is timestamp &&[m
+[32m+[m[32m        request.time < afterData.expiresAt &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          // 1. Initial Application Activation (atomic single-use consumption)[m
+[32m+[m[32m          ([m
+[32m+[m[32m            beforeData.status == 'PENDING' &&[m
+[32m+[m[32m            beforeData.get('verificationStage', '') == 'VERIFIED' &&[m
+[32m+[m[32m            beforeData.get('isActivated', false) == false &&[m
+[32m+[m[32m            afterData.get('isActivated', false) == true &&[m
+[32m+[m[32m            ('approvedAt' in afterData) &&[m
+[32m+[m[32m            afterData.approvedAt == request.time[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // 2. Appeal Resume Activation (atomic single-use consumption of frozen remaining time)[m
+[32m+[m[32m          ([m
+[32m+[m[32m            beforeData.status == 'REVOKED' &&[m
+[32m+[m[32m            beforeData.get('appealStatus', '') == 'RESUME_REQUESTED' &&[m
+[32m+[m[32m            beforeData.get('resumeConsumed', false) == false &&[m
+[32m+[m[32m            beforeData.get('pausedRemainingPremiumMs', 0) > 0 &&[m
+[32m+[m[32m            afterData.get('appealStatus', '') == 'APPROVED' &&[m
+[32m+[m[32m            afterData.get('resumeConsumed', false) == true &&[m
+[32m+[m[32m            ('resumedAt' in afterData) &&[m
+[32m+[m[32m            afterData.resumedAt == request.time &&[m
+[32m+[m[32m            ('resumedExpiry' in afterData) &&[m
+[32m+[m[32m            afterData.expiresAt == afterData.resumedExpiry[m
+[32m+[m[32m          )[m
+[32m+[m[32m        );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isValidPromotionApproval(badgeType, reqId, listingId, ownerId) {[m
+[32m+[m[32m      return reqId is string && reqId.size() > 0 &&[m
+[32m+[m[32m        exists(/databases/$(database)/documents/promotionRequests/$(reqId)) &&[m
+[32m+[m[32m        isValidPromotionTransition(badgeType, reqId, listingId, ownerId);[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isListingActivatedInBatch(type, targetId, reqId) {[m
+[32m+[m[32m      let listingPath = /databases/$(database)/documents/listings/$(targetId);[m
+[32m+[m[32m      return exists(listingPath) && ([m
+[32m+[m[32m        (type == 'FEATURED' &&[m[41m [m
+[32m+[m[32m         getAfter(listingPath).data.get('isFeatured', false) == true &&[m
+[32m+[m[32m         getAfter(listingPath).data.get('featuredRequestId', '') == reqId) ||[m
+[32m+[m[32m        (type == 'BOOST' &&[m[41m [m
+[32m+[m[32m         getAfter(listingPath).data.get('isBoosted', false) == true &&[m
+[32m+[m[32m         getAfter(listingPath).data.get('boostedRequestId', '') == reqId) ||[m
+[32m+[m[32m        type == 'VERIFIED'[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isValidId(id) {[m
+[32m+[m[32m      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    function isNotBlocked() {[m
+[32m+[m[32m      return isSignedIn() && ([m
+[32m+[m[32m        isAdmin() ||[m[41m [m
+[32m+[m[32m        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||[m
+[32m+[m[32m        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false[m
+[32m+[m[32m      );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /adminLogs/{logId} {[m
+[32m+[m[32m      allow read, create: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /authorizedAdmins/{adminEmail} {[m
+[32m+[m[32m      allow read: if isSignedIn() && ((hasEmail() && userEmail() == adminEmail.lower()) || isAdmin());[m
+[32m+[m[32m      allow write: if isSuper();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /authorizedPaymentVerifiers/{verifierEmail} {[m
+[32m+[m[32m      allow read: if isSignedIn() && ((hasEmail() && userEmail() == verifierEmail.lower()) || isAdmin() || isPaymentVerifier());[m
+[32m+[m[32m      allow write: if isSuper();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /faqs/{faqId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow write: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /admins/{adminId} {[m
+[32m+[m[32m      allow read: if isAdmin();[m
+[32m+[m[32m      allow write: if false;[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /reports/{reportId} {[m
+[32m+[m[32m      allow read: if (isSignedIn() && resource.data.reporterId == request.auth.uid) || isAdmin();[m
+[32m+[m[32m      allow create: if isSignedIn();[m
+[32m+[m[32m      allow write: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /disputes/{disputeId} {[m
+[32m+[m[32m      allow read: if (isSignedIn() && (resource.data.complainantId == request.auth.uid || resource.data.reportedUserId == request.auth.uid)) || isAdmin();[m
+[32m+[m[32m      allow create: if isSignedIn();[m
+[32m+[m[32m      allow update, delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /profileReports/{reportId} {[m
+[32m+[m[32m      allow read: if (isSignedIn() && resource.data.reporterId == request.auth.uid) || isAdmin();[m
+[32m+[m[32m      allow create: if isSignedIn();[m
+[32m+[m[32m      allow write: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /supportTickets/{ticketId} {[m
+[32m+[m[32m      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);[m
+[32m+[m[32m      allow create: if isSignedIn();[m
+[32m+[m[32m      allow update: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /listings/{listingId} {[m
+[32m+[m[32m      function isValidListing(data) {[m
+[32m+[m[32m        return data.keys().hasAll(["title", "category", "price", "status", "ownerId", "createdAt", "updatedAt"])[m
+[32m+[m[32m          && data.title is string && data.title.size() > 0 && data.title.size() <= 200[m
+[32m+[m[32m          && data.category is string && data.category.size() <= 100[m
+[32m+[m[32m          && data.price is number && data.price >= 0[m
+[32m+[m[32m          && data.status is string && data.status.size() <= 50[m
+[32m+[m[32m          && data.ownerId is string && data.ownerId.size() <= 128;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      function isOwner() {[m
+[32m+[m[32m        return isSignedIn() && (resource == null || resource.data.ownerId == request.auth.uid);[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m
+[32m+[m[32m      allow create: if isNotBlocked()[m
+[32m+[m[32m        && isValidListing(incoming())[m
+[32m+[m[32m        && incoming().ownerId == request.auth.uid[m
+[32m+[m[32m        && (!('isFeatured' in incoming()) || incoming().isFeatured == false)[m
+[32m+[m[32m        && (!('isBoosted' in incoming()) || incoming().isBoosted == false)[m
+[32m+[m[32m        && (!('featuredUntil' in incoming()) || incoming().featuredUntil == null)[m
+[32m+[m[32m        && (!('boostedUntil' in incoming()) || incoming().boostedUntil == null)[m
+[32m+[m[32m        && (!('promotionStatus' in incoming()) || incoming().promotionStatus == 'NONE')[m
+[32m+[m[32m        && (!('promotionRevocationReason' in incoming()) || incoming().promotionRevocationReason == null)[m
+[32m+[m[32m        && (!('featuredRequestId' in incoming()) || incoming().featuredRequestId == null)[m
+[32m+[m[32m        && (!('boostedRequestId' in incoming()) || incoming().boostedRequestId == null);[m
+[32m+[m
+[32m+[m[32m      allow update: if isSuper() ||[m
+[32m+[m[32m        (isAdmin() && ([m
+[32m+[m[32m          // If isFeatured is activated or updated to true, require valid approved Featured application proof[m
+[32m+[m[32m          (!incoming().diff(existing()).affectedKeys().hasAny(['isFeatured', 'featuredUntil']) ||[m
+[32m+[m[32m           incoming().get('isFeatured', false) == false ||[m
+[32m+[m[32m           (incoming().get('isFeatured', false) == existing().get('isFeatured', false) && incoming().get('featuredUntil', null) == existing().get('featuredUntil', null)) ||[m
+[32m+[m[32m           ([m
+[32m+[m[32m             incoming().get('isFeatured', false) == true &&[m
+[32m+[m[32m             isValidPromotionApproval('FEATURED', incoming().get('featuredRequestId', ''), listingId, existing().ownerId) &&[m
+[32m+[m[32m             incoming().featuredUntil <= getAfter(/databases/$(database)/documents/promotionRequests/$(incoming().get('featuredRequestId', ''))).data.expiresAt[m
+[32m+[m[32m           )[m
+[32m+[m[32m          ) &&[m
+[32m+[m[32m          // If isBoosted is activated or updated to true, require valid approved Boost application proof[m
+[32m+[m[32m          (!incoming().diff(existing()).affectedKeys().hasAny(['isBoosted', 'boostedUntil']) ||[m
+[32m+[m[32m           incoming().get('isBoosted', false) == false ||[m
+[32m+[m[32m           (incoming().get('isBoosted', false) == existing().get('isBoosted', false) && incoming().get('boostedUntil', null) == existing().get('boostedUntil', null)) ||[m
+[32m+[m[32m           ([m
+[32m+[m[32m             incoming().get('isBoosted', false) == true &&[m
+[32m+[m[32m             isValidPromotionApproval('BOOST', incoming().get('boostedRequestId', ''), listingId, existing().ownerId) &&[m
+[32m+[m[32m             incoming().boostedUntil <= getAfter(/databases/$(database)/documents/promotionRequests/$(incoming().get('boostedRequestId', ''))).data.expiresAt[m
+[32m+[m[32m           )[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )) ||[m
+[32m+[m[32m        (isNotBlocked() && isOwner() && isValidListing(incoming())[m
+[32m+[m[32m          && incoming().ownerId == existing().ownerId[m
+[32m+[m[32m          && incoming().createdAt == existing().createdAt[m
+[32m+[m[32m          && incoming().updatedAt == request.time[m
+[32m+[m[32m          && ([m
+[32m+[m[32m            // Full update for owner (authoritative promotion lifecycle fields are protected from owner modification)[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m              'title', 'description', 'category', 'subcategory', 'condition',[m[41m [m
+[32m+[m[32m              'price', 'quantity', 'shippingCharges', 'images', 'sellerName',[m[41m [m
+[32m+[m[32m              'phoneNumber', 'whatsappNumber', 'address', 'city', 'locationArea', 'customFields',[m
+[32m+[m[32m              'updatedAt', 'status', 'views', 'saves', 'shares',[m
+[32m+[m[32m              'promotionType', 'promotionProofImage',[m
+[32m+[m[32m              'priceHistory', 'priceDropped', 'previousPrice', 'priceDroppedPercent', 'priceDroppedAmount', 'priceDroppedAt', 'originalPrice'[m
+[32m+[m[32m            ])[m
+[32m+[m[32m            && !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m              'isFeatured', 'featuredUntil', 'isBoosted', 'boostedUntil', 'promotionStatus', 'promotionRevocationReason',[m
+[32m+[m[32m              'featuredRequestId', 'boostedRequestId'[m
+[32m+[m[32m            ])[m
+[32m+[m[32m          )) ||[m
+[32m+[m[32m        ([m
+[32m+[m[32m          // Allow tracking engagement stats openly[m
+[32m+[m[32m          // We include updatedAt here because trackActivity sends it[m
+[32m+[m[32m          incoming().diff(existing()).affectedKeys().hasAny(['views', 'saves', 'shares', 'updatedAt']) &&[m
+[32m+[m[32m          incoming().diff(existing()).affectedKeys().hasOnly(['views', 'saves', 'shares', 'updatedAt']) &&[m
+[32m+[m[32m          (Math.abs(incoming().get('views', 0) - existing().get('views', 0)) <= 1 ||[m[41m [m
+[32m+[m[32m           Math.abs(incoming().get('saves', 0) - existing().get('saves', 0)) <= 1 ||[m
+[32m+[m[32m           Math.abs(incoming().get('shares', 0) - existing().get('shares', 0)) <= 1 ||[m
+[32m+[m[32m           incoming().updatedAt == request.time)[m
+[32m+[m[32m        ) ||[m
+[32m+[m[32m        ([m
+[32m+[m[32m          // Allow buyers to update stock and status during booking[m
+[32m+[m[32m          isSignedIn() &&[m[41m [m
+[32m+[m[32m          incoming().diff(existing()).affectedKeys().hasAny(['quantity', 'status', 'updatedAt', 'bookedAt', 'lastReservedQuantity']) &&[m
+[32m+[m[32m          incoming().diff(existing()).affectedKeys().hasOnly(['quantity', 'status', 'updatedAt', 'bookedAt', 'lastReservedQuantity']) &&[m
+[32m+[m[32m          incoming().quantity < existing().quantity &&[m
+[32m+[m[32m          incoming().quantity >= 0 &&[m
+[32m+[m[32m          incoming().updatedAt == request.time[m
+[32m+[m[32m        );[m
+[32m+[m
+[32m+[m[32m      allow delete: if isAdmin() || (isOwner() && isNotBlocked());[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /promotionRequests/{requestId} {[m
+[32m+[m[32m      allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && resource.data.userId == request.auth.uid);[m
+[32m+[m[32m      allow create: if isAdmin() || ([m
+[32m+[m[32m        isSignedIn() &&[m
+[32m+[m[32m        incoming().userId == request.auth.uid &&[m
+[32m+[m[32m        !('receivedAmount' in incoming()) &&[m
+[32m+[m[32m        (!('verificationStage' in incoming()) || incoming().verificationStage == 'NONE') &&[m
+[32m+[m[32m        (!('isActivated' in incoming()) || incoming().isActivated == false) &&[m
+[32m+[m[32m        (!('resumeConsumed' in incoming()) || incoming().resumeConsumed == false) &&[m
+[32m+[m[32m        (!('refundRequested' in incoming()) || incoming().refundRequested == false) &&[m
+[32m+[m[32m        (!('refundStatus' in incoming()) || incoming().refundStatus == null)[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update: if isSuper() || ([m
+[32m+[m[32m        isAdmin() && ([m
+[32m+[m[32m          // Prohibit resetting isActivated or resumeConsumed from true to false[m
+[32m+[m[32m          !(existing().get('isActivated', false) == true && incoming().get('isActivated', false) == false) &&[m
+[32m+[m[32m          !(existing().get('resumeConsumed', false) == true && incoming().get('resumeConsumed', false) == false) &&[m
+[32m+[m[32m          // TargetId, type, userId are immutable[m
+[32m+[m[32m          incoming().targetId == existing().targetId &&[m
+[32m+[m[32m          incoming().type == existing().type &&[m
+[32m+[m[32m          incoming().userId == existing().userId &&[m
+[32m+[m[32m          // Prevent reopening a finalized refund unless Super Admin[m
+[32m+[m[32m          !(existing().get('refundStatus', '') == 'REFUNDED' && incoming().get('refundStatus', '') != 'REFUNDED') &&[m
+[32m+[m[32m          // Authorized Admin can only transition to REFUNDED from VERIFIER_APPROVED (or maintain REFUNDED)[m
+[32m+[m[32m          ([m
+[32m+[m[32m            incoming().get('refundStatus', '') != 'REFUNDED' ||[m
+[32m+[m[32m            existing().get('refundStatus', '') == 'VERIFIER_APPROVED' ||[m
+[32m+[m[32m            existing().get('refundStatus', '') == 'REFUNDED'[m
+[32m+[m[32m          ) &&[m
+[32m+[m[32m          // If status transitions to or remains APPROVED:[m
+[32m+[m[32m          ([m
+[32m+[m[32m            incoming().status != 'APPROVED' ||[m
+[32m+[m[32m            // 1. Initial approval (atomic batch with listing activation)[m
+[32m+[m[32m            ([m
+[32m+[m[32m              existing().status == 'PENDING' &&[m
+[32m+[m[32m              (existing().get('verificationStage', '') == 'VERIFIED' || existing().get('verificationStage', '') == 'PAYMENT_VERIFIED') &&[m
+[32m+[m[32m              existing().get('isActivated', false) == false &&[m
+[32m+[m[32m              incoming().get('isActivated', false) == true &&[m
+[32m+[m[32m              incoming().approvedAt == request.time &&[m
+[32m+[m[32m              ('expiresAt' in incoming()) &&[m
+[32m+[m[32m              incoming().expiresAt is timestamp &&[m
+[32m+[m[32m              isListingActivatedInBatch(incoming().type, incoming().targetId, requestId)[m
+[32m+[m[32m            ) ||[m
+[32m+[m[32m            // 2. Appeal resume (atomic batch with listing resumption)[m
+[32m+[m[32m            ([m
+[32m+[m[32m              existing().status == 'REVOKED' &&[m
+[32m+[m[32m              existing().get('appealStatus', '') == 'RESUME_REQUESTED' &&[m
+[32m+[m[32m              existing().get('resumeConsumed', false) == false &&[m
+[32m+[m[32m              existing().get('pausedRemainingPremiumMs', 0) > 0 &&[m
+[32m+[m[32m              incoming().get('appealStatus', '') == 'APPROVED' &&[m
+[32m+[m[32m              incoming().get('resumeConsumed', false) == true &&[m
+[32m+[m[32m              incoming().resumedAt == request.time &&[m
+[32m+[m[32m              ('expiresAt' in incoming()) &&[m
+[32m+[m[32m              incoming().expiresAt is timestamp &&[m
+[32m+[m[32m              ('resumedExpiry' in incoming()) &&[m
+[32m+[m[32m              incoming().expiresAt == incoming().resumedExpiry &&[m
+[32m+[m[32m              isListingActivatedInBatch(incoming().type, incoming().targetId, requestId)[m
+[32m+[m[32m            ) ||[m
+[32m+[m[32m            // 3. Already approved (immutable approval parameters)[m
+[32m+[m[32m            ([m
+[32m+[m[32m              existing().status == 'APPROVED' &&[m
+[32m+[m[32m              incoming().get('isActivated', false) == existing().get('isActivated', false) &&[m
+[32m+[m[32m              incoming().get('approvedAt', null) == existing().get('approvedAt', null) &&[m
+[32m+[m[32m              incoming().get('expiresAt', null) == existing().get('expiresAt', null)[m
+[32m+[m[32m            )[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      ) || ([m
+[32m+[m[32m        isPaymentVerifier() && incoming().status != 'APPROVED' &&[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'isActivated', 'resumeConsumed', 'approvedAt', 'resumedAt', 'expiresAt',[m
+[32m+[m[32m          'refundedAt', 'refundedBy', 'refundedByUid', 'adminRefundProof'[m
+[32m+[m[32m        ]) &&[m
+[32m+[m[32m        // Verifier cannot finalize or mark as REFUNDED[m
+[32m+[m[32m        incoming().get('refundStatus', '') != 'REFUNDED' &&[m
+[32m+[m[32m        // Verifier cannot reopen an already finalized refund[m
+[32m+[m[32m        !(existing().get('refundStatus', '') == 'REFUNDED' && incoming().get('refundStatus', '') != 'REFUNDED') &&[m
+[32m+[m[32m        // Verifier refund transitions are constrained to legitimate settlement steps[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('refundStatus', null) == existing().get('refundStatus', null) ||[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().get('refundStatus', '') == 'SENT_TO_VERIFIERS' &&[m
+[32m+[m[32m            (incoming().get('refundStatus', '') == 'VERIFIER_APPROVED' || incoming().get('refundStatus', '') == 'VERIFIER_REJECTED')[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      ) || ([m
+[32m+[m[32m        isSignedIn() &&[m
+[32m+[m[32m        existing().userId == request.auth.uid &&[m
+[32m+[m[32m        // Status is immutable for normal users - cannot reopen, approve, or change status[m
+[32m+[m[32m        incoming().status == existing().status &&[m
+[32m+[m[32m        // Immutable authoritative lifecycle and financial fields[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'receivedAmount', 'verificationStage', 'paymentVerifiedBy', 'paymentVerifiedByUid', 'paymentVerifiedAt',[m
+[32m+[m[32m          'rejectionCategory', 'rejectedAt', 'isRefundable',[m
+[32m+[m[32m          'isActivated', 'resumeConsumed', 'approvedAt', 'resumedAt', 'expiresAt',[m
+[32m+[m[32m          'refundedAt', 'refundedBy', 'refundedByUid', 'verifierRejectReason', 'adminRefundProof',[m
+[32m+[m[32m          'refundCalculatedAmount', 'refundRetentionAmount', 'refundPercentage', 'refundRetentionPercentage'[m
+[32m+[m[32m        ]) &&[m
+[32m+[m[32m        // User may submit appeal or refund claim:[m
+[32m+[m[32m        ([m
+[32m+[m[32m          // Case A: Appeal on Revoked Promotion[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().status == 'REVOKED' &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly(['appealStatus', 'appealMessage', 'appealImages', 'updatedAt'])[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Case B: Legitimate Refund Claim on Eligible Rejected Promotion[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().status == 'REJECTED' &&[m
+[32m+[m[32m            existing().get('verificationStage', '') == 'PAYMENT_VERIFIED' &&[m
+[32m+[m[32m            existing().get('receivedAmount', 0) > 0 &&[m
+[32m+[m[32m            existing().get('rejectionCategory', '') != 'FRAUD' &&[m
+[32m+[m[32m            existing().get('rejectionCategory', '') != 'NON_PAYMENT' &&[m
+[32m+[m[32m            existing().get('isRefundable', true) != false &&[m
+[32m+[m[32m            existing().get('isActivated', false) == false &&[m
+[32m+[m[32m            existing().get('refundStatus', '') != 'REFUNDED' &&[m
+[32m+[m[32m            existing().get('refundRequested', false) == false &&[m
+[32m+[m[32m            // 7-Day refund deadline enforced strictly by Firestore Rules[m
+[32m+[m[32m            ([m
+[32m+[m[32m              existing().get('rejectedAt', null) != null[m
+[32m+[m[32m                ? request.time < existing().rejectedAt + duration.value(7, 'd')[m
+[32m+[m[32m                : (existing().get('updatedAt', null) != null ? request.time < existing().updatedAt + duration.value(7, 'd') : false)[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            incoming().get('refundRequested', false) == true &&[m
+[32m+[m[32m            incoming().get('refundStatus', '') == 'PENDING' &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m              'refundRequested', 'refundRequestedAt', 'refundStatus',[m
+[32m+[m[32m              'refundName', 'refundBankName', 'refundAccountNumber', 'refundProofImages', 'refundProofImage',[m
+[32m+[m[32m              'updatedAt'[m
+[32m+[m[32m            ])[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isSuper();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /credit_applications/{applicationId} {[m
+[32m+[m[32m      allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && resource.data.userId == request.auth.uid);[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().userId == request.auth.uid &&[m
+[32m+[m[32m                    (!('status' in incoming()) || incoming().status == 'PENDING') &&[m
+[32m+[m[32m                    !('approvedAt' in incoming()) &&[m
+[32m+[m[32m                    !('approvedBy' in incoming()) &&[m
+[32m+[m[32m                    !('rejectedAt' in incoming()) &&[m
+[32m+[m[32m                    !('rejectedBy' in incoming());[m
+[32m+[m[32m      allow update: if isSuper() || isAdmin() || isPaymentVerifier();[m
+[32m+[m[32m      allow delete: if isSuper() || isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /users/{userId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create: if (isSignedIn() && request.auth.uid == userId[m
+[32m+[m[32m                    && incoming().createdAt == request.time[m
+[32m+[m[32m                    && (!('trustScore' in incoming()) || incoming().trustScore == 50)[m
+[32m+[m[32m                    && (!('trustTier' in incoming()) || incoming().trustTier == 'Neutral / Building')[m
+[32m+[m[32m                    && (!('creditsBalance' in incoming()) || incoming().creditsBalance == 0)[m
+[32m+[m[32m                    && (!('totalCreditsPurchased' in incoming()) || incoming().totalCreditsPurchased == 0)[m
+[32m+[m[32m                    && (!('totalCreditsSpent' in incoming()) || incoming().totalCreditsSpent == 0)[m
+[32m+[m[32m                    && !('kycStatus' in incoming())[m
+[32m+[m[32m                    && !('isKycVerified' in incoming())[m
+[32m+[m[32m                    && !('isVerified' in incoming())[m
+[32m+[m[32m                    && !('verifiedBadgeType' in incoming())[m
+[32m+[m[32m                    && !('isPremiumVerified' in incoming())[m
+[32m+[m[32m                    && !('cnicNumber' in incoming())[m
+[32m+[m[32m                    && !('residentialAddress' in incoming())[m
+[32m+[m[32m                    && !('cnicFrontPhoto' in incoming())[m
+[32m+[m[32m                    && !('cnicBackPhoto' in incoming())[m
+[32m+[m[32m                    && !('selfiePhoto' in incoming())) || isAdmin();[m
+[32m+[m[32m      allow update: if (isSignedIn() && request.auth.uid == userId[m
+[32m+[m[32m                        && ([m
+[32m+[m[32m                          isNotBlocked() ||[m[41m [m
+[32m+[m[32m                          incoming().diff(existing()).affectedKeys().hasOnly(['appealStatus', 'appealMessage', 'updatedAt'])[m
+[32m+[m[32m                        )[m
+[32m+[m[32m                        // BANNED FOR NORMAL USERS: KYC and Authority Fields[m
+[32m+[m[32m                        && !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m                          'kycStatus', 'isKycVerified', 'isVerified', 'verifiedBadgeType',[m
+[32m+[m[32m                          'isPremiumVerified', 'kycApprovedAt', 'kycApprovedBy',[m
+[32m+[m[32m                          'kycRejectionReason', 'kycRevokedAt', 'kycRevokedBy', 'verifiedUntil',[m
+[32m+[m[32m                          'cnicNumber', 'residentialAddress', 'cnicFrontPhoto', 'cnicBackPhoto', 'selfiePhoto'[m
+[32m+[m[32m                        ])[m
+[32m+[m[32m                        && incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                          'name', 'photoURL', 'phoneNumber', 'city', 'address', 'email', 'updatedAt',[m
+[32m+[m[32m                          'referralCount', 'referredBy', 'appealStatus', 'appealMessage', 'kycType',[m
+[32m+[m[32m                          'hasPendingNameChange', 'verifiedBadgeRequestStatus', 'verificationStatus',[m
+[32m+[m[32m                          'bio', 'websiteUrl', 'facebookPage', 'isNameChangeAllowed', 'username',[m
+[32m+[m[32m                          'lastUsernameChangedAt', 'country', 'countryOfStay', 'realName', 'businessName',[m
+[32m+[m[32m                          'accountType', 'coverPhotoURL'[m
+[32m+[m[32m                        ])[m
+[32m+[m[32m                        && ([m
+[32m+[m[32m                          (!incoming().diff(existing()).affectedKeys().hasAny(['name'])) ||[m
+[32m+[m[32m                          !(existing().get('kycStatus', '') == 'APPROVED' || existing().get('isKycVerified', false) == true) ||[m
+[32m+[m[32m                          existing().get('isNameChangeAllowed', false) == true[m
+[32m+[m[32m                        )[m
+[32m+[m[32m                    ) || ([m
+[32m+[m[32m                      // Action: Prune legacy sensitive fields from users/{userId}[m
+[32m+[m[32m                      isSignedIn() && request.auth.uid == userId &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly(['cnicNumber', 'residentialAddress', 'cnicFrontPhoto', 'cnicBackPhoto', 'selfiePhoto', 'updatedAt']) &&[m
+[32m+[m[32m                      !('cnicNumber' in incoming()) && !('residentialAddress' in incoming()) &&[m
+[32m+[m[32m                      !('cnicFrontPhoto' in incoming()) && !('cnicBackPhoto' in incoming()) && !('selfiePhoto' in incoming())[m
+[32m+[m[32m                    ) || isAdmin() || ([m
+[32m+[m[32m                      // Action: Referral increment (allow other users to update during signup flow)[m
+[32m+[m[32m                      isSignedIn() &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasAny(['referralCount']) &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly(['referralCount', 'updatedAt']) &&[m
+[32m+[m[32m                      incoming().referralCount == existing().get('referralCount', 0) + 1[m
+[32m+[m[32m                    ) || ([m
+[32m+[m[32m                      // Action: Bid credit deduction (allow user to deduct exactly 1 credit for an auction bid)[m
+[32m+[m[32m                      isSignedIn() && request.auth.uid == userId && isNotBlocked() &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly(['creditsBalance', 'totalCreditsSpent', 'creditsLastUpdatedAt', 'updatedAt']) &&[m
+[32m+[m[32m                      existing().get('creditsBalance', 0) >= 1 &&[m
+[32m+[m[32m                      incoming().creditsBalance == existing().get('creditsBalance', 0) - 1 &&[m
+[32m+[m[32m                      incoming().totalCreditsSpent == existing().get('totalCreditsSpent', 0) + 1[m
+[32m+[m[32m                    ) || ([m
+[32m+[m[32m                      // Action: Private Negotiation listing posting fee (allow user to deduct exactly 5 credits)[m
+[32m+[m[32m                      isSignedIn() && request.auth.uid == userId && isNotBlocked() &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly(['creditsBalance', 'totalCreditsSpent', 'creditsLastUpdatedAt', 'updatedAt']) &&[m
+[32m+[m[32m                      existing().get('creditsBalance', 0) >= 5 &&[m
+[32m+[m[32m                      incoming().creditsBalance == existing().get('creditsBalance', 0) - 5 &&[m
+[32m+[m[32m                      incoming().totalCreditsSpent == existing().get('totalCreditsSpent', 0) + 5[m
+[32m+[m[32m                    ) || ([m
+[32m+[m[32m                      // Action: Platform synthetic identity canonical realignment[m
+[32m+[m[32m                      userId == 'official-marketplace-store' &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                        'isSystemAccount', 'isBot', 'kycStatus', 'isKycVerified',[m
+[32m+[m[32m                        'isPremiumVerified', 'isPremiumSeller', 'isVerified', 'updatedAt'[m
+[32m+[m[32m                      ]) &&[m
+[32m+[m[32m                      incoming().isSystemAccount == true[m
+[32m+[m[32m                    ) || ([m
+[32m+[m[32m                      // Action: Activity tracking (allow others to increment stats)[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasAny(['sellerScore', 'totalViews', 'totalSaves', 'totalShares', 'trustRanking', 'updatedAt']) &&[m
+[32m+[m[32m                      incoming().diff(existing()).affectedKeys().hasOnly(['sellerScore', 'totalViews', 'totalSaves', 'totalShares', 'trustRanking', 'updatedAt'])[m
+[32m+[m[32m                    );[m
+[32m+[m
+[32m+[m[32m      allow delete: if isSuper();[m
+[32m+[m
+[32m+[m[32m      match /favorites/{listingId} {[m
+[32m+[m[32m        allow read: if isSignedIn() && userId == request.auth.uid;[m
+[32m+[m[32m        allow write: if isSignedIn() && userId == request.auth.uid;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      match /notifications/{notificationId} {[m
+[32m+[m[32m        allow read: if isSignedIn() && (userId == request.auth.uid || isAdmin());[m
+[32m+[m[32m        allow create: if isAdmin() || ([m
+[32m+[m[32m          isSignedIn() && isNotBlocked() && ([m
+[32m+[m[32m            userId == request.auth.uid ||[m
+[32m+[m[32m            ([m
+[32m+[m[32m              incoming().get('type', '') == 'outbid' &&[m
+[32m+[m[32m              incoming().get('link', '').matches('^/battle-bids\\?id=.*')[m
+[32m+[m[32m            )[m
+[32m+[m[32m          ) &&[m
+[32m+[m[32m          !incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE'][m
+[32m+[m[32m        );[m
+[32m+[m[32m        allow update: if isSignedIn() && (userId == request.auth.uid || isAdmin())[m
+[32m+[m[32m                      && incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'read']);[m
+[32m+[m[32m        allow delete: if isSignedIn() && (userId == request.auth.uid || isAdmin());[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      match /watchlist/{auctionId} {[m
+[32m+[m[32m        allow read: if isSignedIn() && userId == request.auth.uid;[m
+[32m+[m[32m        allow write: if isSignedIn() && userId == request.auth.uid;[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /orders/{orderId} {[m
+[32m+[m[32m      allow read: if isSignedIn() && (resource.data.get('buyerId', '') == request.auth.uid || resource.data.get('sellerId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow create: if isNotBlocked() && ([m
+[32m+[m[32m        isAdmin() ||[m
+[32m+[m[32m        // Standard non-Battle-Bids marketplace orders[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('source', '') != 'battle_bids' &&[m
+[32m+[m[32m          (incoming().get('buyerId', '') == request.auth.uid || incoming().get('sellerId', '') == request.auth.uid)[m
+[32m+[m[32m        ) ||[m
+[32m+[m[32m        // Primary Battle Bids winning order (BB-${auctionId})[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('source', '') == 'battle_bids' &&[m
+[32m+[m[32m          incoming().get('isSecondChance', false) == false &&[m
+[32m+[m[32m          orderId == ('BB-' + incoming().get('auctionId', '')) &&[m
+[32m+[m[32m          (incoming().get('buyerId', '') == request.auth.uid || incoming().get('sellerId', '') == request.auth.uid) &&[m
+[32m+[m[32m          incoming().get('status', '') == 'AWAITING_PAYMENT'[m
+[32m+[m[32m        ) ||[m
+[32m+[m[32m        // Canonical Second-Chance Battle Bids order (BB-${auctionId}-SC)[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('source', '') == 'battle_bids' &&[m
+[32m+[m[32m          incoming().get('isSecondChance', false) == true &&[m
+[32m+[m[32m          orderId == ('BB-' + incoming().get('auctionId', '') + '-SC') &&[m
+[32m+[m[32m          incoming().get('status', '') == 'AWAITING_PAYMENT' &&[m
+[32m+[m[32m          incoming().get('buyerId', '') == request.auth.uid &&[m
+[32m+[m[32m          exists(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )) &&[m
+[32m+[m[32m          get(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )).data.get('status', '') in ['PENDING', 'ACCEPTED'] &&[m
+[32m+[m[32m          incoming().get('buyerId', '') == get(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )).data.get('buyerId', '') &&[m
+[32m+[m[32m          incoming().get('sellerId', '') == get(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )).data.get('sellerId', '') &&[m
+[32m+[m[32m          incoming().get('amount', 0) == get(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )).data.get('amount', 0) &&[m
+[32m+[m[32m          incoming().get('currency', '') == get(/databases/$(database)/documents/second_chance_offers/$( 'SC-' + incoming().get('auctionId', '') )).data.get('currency', '')[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update: if isNotBlocked()[m
+[32m+[m[32m                    && (existing().get('buyerId', '') == request.auth.uid || existing().get('sellerId', '') == request.auth.uid || isAdmin())[m
+[32m+[m[32m                    && (isAdmin() || ([m
+[32m+[m[32m                      // 1. Strict immutability of financial & identity core fields[m
+[32m+[m[32m                      incoming().get('buyerId', '') == existing().get('buyerId', '') &&[m
+[32m+[m[32m                      incoming().get('sellerId', '') == existing().get('sellerId', '') &&[m
+[32m+[m[32m                      incoming().get('source', '') == existing().get('source', '') &&[m
+[32m+[m[32m                      incoming().get('auctionId', '') == existing().get('auctionId', '') &&[m
+[32m+[m[32m                      incoming().get('amount', 0) == existing().get('amount', 0) &&[m
+[32m+[m[32m                      incoming().get('totalAmount', 0) == existing().get('totalAmount', 0) &&[m
+[32m+[m[32m                      incoming().get('currency', '') == existing().get('currency', '') &&[m
+[32m+[m[32m                      incoming().get('createdAt', null) == existing().get('createdAt', null) &&[m
+[32m+[m[32m                      incoming().get('paymentDeadline', null) == existing().get('paymentDeadline', null) &&[m
+[32m+[m
+[32m+[m[32m                      // 2. Battle Bids authoritative role-based status transition & deadline matrix[m
+[32m+[m[32m                      ([m
+[32m+[m[32m                        existing().get('source', '') != 'battle_bids' ||[m
+[32m+[m[32m                        ([m
+[32m+[m[32m                          // BUYER TRANSITION RULES[m
+[32m+[m[32m                          ([m
+[32m+[m[32m                            request.auth.uid == existing().get('buyerId', '') &&[m
+[32m+[m[32m                            // Must not be expired when submitting[m
+[32m+[m[32m                            (existing().get('paymentDeadline', null) == null || request.time < existing().paymentDeadline) &&[m
+[32m+[m[32m                            // Existing state must be AWAITING_PAYMENT or PAYMENT_REVIEW[m
+[32m+[m[32m                            existing().get('status', '') in ['AWAITING_PAYMENT', 'PAYMENT_REVIEW'] &&[m
+[32m+[m[32m                            // New state can ONLY be PAYMENT_REVIEW (or remain unchanged)[m
+[32m+[m[32m                            incoming().get('status', '') in [existing().get('status', ''), 'PAYMENT_REVIEW'] &&[m
+[32m+[m[32m                            // Buyer cannot touch seller fulfillment / verification stamps[m
+[32m+[m[32m                            !incoming().diff(existing()).affectedKeys().hasAny(['courierName', 'trackingNumber', 'paymentVerifiedAt', 'shippedAt'])[m
+[32m+[m[32m                          )[m
+[32m+[m[32m                          ||[m
+[32m+[m[32m                          // SELLER TRANSITION RULES[m
+[32m+[m[32m                          ([m
+[32m+[m[32m                            request.auth.uid == existing().get('sellerId', '') &&[m
+[32m+[m[32m                            ([m
+[32m+[m[32m                              // Review -> Paid[m
+[32m+[m[32m                              (incoming().get('status', '') == 'PAID' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT', 'PAID']) ||[m
+[32m+[m[32m                              // Paid -> Shipped[m
+[32m+[m[32m                              (incoming().get('status', '') == 'SHIPPED' && existing().get('status', '') in ['PAID', 'SHIPPED']) ||[m
+[32m+[m[32m                              // Shipped -> Deal Done / Completed[m
+[32m+[m[32m                              (incoming().get('status', '') in ['DEAL_DONE', 'COMPLETED'] && existing().get('status', '') in ['SHIPPED', 'DEAL_DONE', 'COMPLETED']) ||[m
+[32m+[m[32m                              // Rejection: Review -> Awaiting Payment[m
+[32m+[m[32m                              (incoming().get('status', '') == 'AWAITING_PAYMENT' && existing().get('status', '') in ['PAYMENT_REVIEW', 'AWAITING_PAYMENT']) ||[m
+[32m+[m[32m                              // Expiration Trigger by Seller when deadline has passed[m
+[32m+[m[32m                              (incoming().get('status', '') == 'PAYMENT_EXPIRED' && existing().get('status', '') == 'AWAITING_PAYMENT' && existing().get('paymentDeadline', null) != null && request.time >= existing().paymentDeadline) ||[m
+[32m+[m[32m                              // Same status update (e.g. updating notes or address verification)[m
+[32m+[m[32m                              (incoming().get('status', '') == existing().get('status', ''))[m
+[32m+[m[32m                            )[m
+[32m+[m[32m                          )[m
+[32m+[m[32m                          ||[m
+[32m+[m[32m                          // SYSTEM / PARTICIPANT EXPIRATION TRIGGER (When payment deadline has passed and status is AWAITING_PAYMENT)[m
+[32m+[m[32m                          ([m
+[32m+[m[32m                            incoming().get('status', '') == 'PAYMENT_EXPIRED' &&[m
+[32m+[m[32m                            existing().get('status', '') == 'AWAITING_PAYMENT' &&[m
+[32m+[m[32m                            existing().get('paymentDeadline', null) != null &&[m
+[32m+[m[32m                            request.time >= existing().paymentDeadline[m
+[32m+[m[32m                          )[m
+[32m+[m[32m                        )[m
+[32m+[m[32m                      )[m
+[32m+[m[32m                    ))[m
+[32m+[m[32m                    && incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m                      'status', 'updatedAt', 'courierName', 'trackingNumber', 'shippingNotes',[m
+[32m+[m[32m                      'shippingAddress', 'buyerAddress', 'buyerName', 'buyerContact', 'buyerPhone',[m
+[32m+[m[32m                      'city', 'province', 'postalCode', 'state',[m
+[32m+[m[32m                      'paymentProofUrl', 'paymentProof', 'transactionId', 'paymentMethod', 'paymentNotes',[m
+[32m+[m[32m                      'paymentSubmittedAt', 'paymentVerifiedAt', 'paymentRejectedAt', 'paymentDenialReason', 'paymentMadeAt', 'shippedAt',[m
+[32m+[m[32m                      'expiredAt', 'expirationReason'[m
+[32m+[m[32m                    ]);[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /second_chance_offers/{offerId} {[m
+[32m+[m[32m      allow read: if isSignedIn() && (resource.data.get('buyerId', '') == request.auth.uid || resource.data.get('sellerId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow create: if isNotBlocked() && ([m
+[32m+[m[32m        isAdmin() ||[m
+[32m+[m[32m        ([m
+[32m+[m[32m          isSignedIn() &&[m
+[32m+[m[32m          offerId == ('SC-' + incoming().get('auctionId', '')) &&[m
+[32m+[m[32m          incoming().get('originalOrderId', '') == ('BB-' + incoming().get('auctionId', '')) &&[m
+[32m+[m[32m          incoming().get('status', '') == 'PENDING' &&[m
+[32m+[m[32m          incoming().get('amount', 0) is number &&[m
+[32m+[m[32m          incoming().get('amount', 0) > 0 &&[m
+[32m+[m[32m          incoming().get('expiresAt', null) != null &&[m
+[32m+[m[32m          incoming().get('expiresAt', request.time) > request.time &&[m
+[32m+[m[32m          (incoming().get('sellerId', '') == request.auth.uid || incoming().get('buyerId', '') == request.auth.uid) &&[m
+[32m+[m[32m          // Verify against the authoritative expired original order[m
+[32m+[m[32m          exists(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))) &&[m
+[32m+[m[32m          get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('status', '') == 'PAYMENT_EXPIRED' &&[m
+[32m+[m[32m          get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('source', '') == 'battle_bids' &&[m
+[32m+[m[32m          incoming().get('sellerId', '') == get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('sellerId', '') &&[m
+[32m+[m[32m          incoming().get('currency', '') == get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('currency', '') &&[m
+[32m+[m[32m          incoming().get('buyerId', '') != get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('buyerId', '') &&[m
+[32m+[m[32m          incoming().get('buyerId', '') != incoming().get('sellerId', '') &&[m
+[32m+[m[32m          incoming().get('amount', 0) <= get(/databases/$(database)/documents/orders/$(incoming().get('originalOrderId', ''))).data.get('amount', 0)[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update: if isNotBlocked() && ([m
+[32m+[m[32m        isAdmin() ||[m
+[32m+[m[32m        ([m
+[32m+[m[32m          isSignedIn() && (existing().get('buyerId', '') == request.auth.uid || existing().get('sellerId', '') == request.auth.uid) &&[m
+[32m+[m[32m          // Buyer can ACCEPT or DECLINE before expiration[m
+[32m+[m[32m          ([m
+[32m+[m[32m            request.auth.uid == existing().get('buyerId', '') &&[m
+[32m+[m[32m            request.time < existing().expiresAt &&[m
+[32m+[m[32m            existing().get('status', '') == 'PENDING' &&[m
+[32m+[m[32m            incoming().get('status', '') in ['ACCEPTED', 'DECLINED'] &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              incoming().get('status', '') != 'ACCEPTED' ||[m
+[32m+[m[32m              incoming().get('newOrderId', '') == ('BB-' + existing().get('auctionId', '') + '-SC')[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'acceptedAt', 'declinedAt', 'newOrderId', 'updatedAt'])[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Offer can expire after expiresAt[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().get('status', '') == 'PENDING' &&[m
+[32m+[m[32m            request.time >= existing().expiresAt &&[m
+[32m+[m[32m            incoming().get('status', '') == 'EXPIRED' &&[m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /notifications/{notificationId} {[m
+[32m+[m[32m      allow read: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow create: if isAdmin() || ([m
+[32m+[m[32m        isSignedIn() && isNotBlocked() &&[m
+[32m+[m[32m        incoming().get('userId', '') == request.auth.uid &&[m
+[32m+[m[32m        !incoming().get('type', '') in ['CREDITS_ISSUED', 'CREDITS_REJECTED', 'KYC_APPROVED', 'KYC_REJECTED', 'PAYMENT_VERIFIED', 'PROMOTION_APPROVED', 'PROMOTION_REVOKED', 'SYSTEM_ALERT', 'ADMIN_NOTICE'][m
+[32m+[m[32m      );[m[41m [m
+[32m+[m[32m      allow update: if isSignedIn() && (existing().get('userId', '') == request.auth.uid || isAdmin())[m
+[32m+[m[32m                    && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'isRead']);[m
+[32m+[m[32m      allow delete: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /broadcasts/{broadcastId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create, update, delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /chats/{chatId} {[m
+[32m+[m[32m      allow read: if isSignedIn() && (resource.data.get('buyerId', '') == request.auth.uid || resource.data.get('sellerId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow create: if (isNotBlocked() || incoming().get('sellerId', '') == 'ADMIN' || incoming().get('listingId', '') == 'SUPPORT')[m[41m [m
+[32m+[m[32m                    && (incoming().get('buyerId', '') == request.auth.uid || incoming().get('sellerId', '') == request.auth.uid);[m
+[32m+[m[32m      allow update: if (isNotBlocked() || existing().get('sellerId', '') == 'ADMIN' || existing().get('listingId', '') == 'SUPPORT' || isAdmin())[m
+[32m+[m[32m                       && (existing().get('buyerId', '') == request.auth.uid || existing().get('sellerId', '') == request.auth.uid || isAdmin())[m
+[32m+[m[32m                       // Strict identity immutability: participants cannot modify any identity key[m
+[32m+[m[32m                       && (isAdmin() || !incoming().diff(existing()).affectedKeys().hasAny(['buyerId', 'sellerId', 'listingId', 'initiatorId']))[m
+[32m+[m[32m                       && incoming().get('buyerId', '') == existing().get('buyerId', '')[m
+[32m+[m[32m                       && incoming().get('sellerId', '') == existing().get('sellerId', '')[m
+[32m+[m[32m                       && incoming().get('listingId', '') == existing().get('listingId', '')[m
+[32m+[m[32m                       && incoming().get('initiatorId', '') == existing().get('initiatorId', '')[m
+[32m+[m[32m                       // Personal chat settings ownership (M7.2)[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() || ([m
+[32m+[m[32m                           // Buyer personal fields may only be modified by the buyer[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['isArchivedBuyer', 'isMutedBuyer', 'isPinnedBuyer']) ||[m
+[32m+[m[32m                            existing().get('buyerId', '') == request.auth.uid) &&[m
+[32m+[m[32m                           // Seller personal fields may only be modified by the seller[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['isArchivedSeller', 'isMutedSeller', 'isPinnedSeller']) ||[m
+[32m+[m[32m                            existing().get('sellerId', '') == request.auth.uid)[m
+[32m+[m[32m                         )[m
+[32m+[m[32m                       )[m
+[32m+[m[32m                       // Chat deletion-state protection (M7.3)[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() || ([m
+[32m+[m[32m                           // isDeletedBuyer: buyer can set true/false; seller can ONLY set false with message-send signature[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['isDeletedBuyer']) ||[m
+[32m+[m[32m                            existing().get('buyerId', '') == request.auth.uid ||[m
+[32m+[m[32m                            (existing().get('sellerId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('isDeletedBuyer', false) == false &&[m
+[32m+[m[32m                             incoming().get('lastMessageSenderId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('lastMessageStatus', '') == 'sent')) &&[m
+[32m+[m[32m                           // isDeletedSeller: seller can set true/false; buyer can ONLY set false with message-send signature[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['isDeletedSeller']) ||[m
+[32m+[m[32m                            existing().get('sellerId', '') == request.auth.uid ||[m
+[32m+[m[32m                            (existing().get('buyerId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('isDeletedSeller', false) == false &&[m
+[32m+[m[32m                             incoming().get('lastMessageSenderId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('lastMessageStatus', '') == 'sent'))[m
+[32m+[m[32m                         )[m
+[32m+[m[32m                       )[m
+[32m+[m[32m                       // Unread counter protection (M7.4)[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() || ([m
+[32m+[m[32m                           // unreadCountBuyer: buyer may set 0 or 1; seller may increment with message-send signature[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['unreadCountBuyer']) ||[m
+[32m+[m[32m                            (existing().get('buyerId', '') == request.auth.uid && incoming().get('unreadCountBuyer', 0) in [0, 1]) ||[m
+[32m+[m[32m                            (existing().get('sellerId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('unreadCountBuyer', 0) is int &&[m
+[32m+[m[32m                             incoming().get('unreadCountBuyer', 0) > existing().get('unreadCountBuyer', 0) &&[m
+[32m+[m[32m                             incoming().get('lastMessageSenderId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('lastMessageStatus', '') == 'sent')) &&[m
+[32m+[m[32m                           // unreadCountSeller: seller may set 0 or 1; buyer may increment with message-send signature[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['unreadCountSeller']) ||[m
+[32m+[m[32m                            (existing().get('sellerId', '') == request.auth.uid && incoming().get('unreadCountSeller', 0) in [0, 1]) ||[m
+[32m+[m[32m                            (existing().get('buyerId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('unreadCountSeller', 0) is int &&[m
+[32m+[m[32m                             incoming().get('unreadCountSeller', 0) > existing().get('unreadCountSeller', 0) &&[m
+[32m+[m[32m                             incoming().get('lastMessageSenderId', '') == request.auth.uid &&[m
+[32m+[m[32m                             incoming().get('lastMessageStatus', '') == 'sent'))[m
+[32m+[m[32m                         )[m
+[32m+[m[32m                       )[m
+[32m+[m[32m                       // Message metadata protection (M7.5)[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() || ([m
+[32m+[m[32m                           // lastMessageSenderId: if modified, must equal caller UID[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['lastMessageSenderId']) ||[m
+[32m+[m[32m                            incoming().get('lastMessageSenderId', '') == request.auth.uid) &&[m
+[32m+[m[32m                           // lastMessageStatus: if modified, must be one of ['sent', 'delivered', 'seen'][m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['lastMessageStatus']) ||[m
+[32m+[m[32m                            incoming().get('lastMessageStatus', '') in ['sent', 'delivered', 'seen']) &&[m
+[32m+[m[32m                           // updatedAt: if modified, must equal request.time (serverTimestamp)[m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['updatedAt']) ||[m
+[32m+[m[32m                            incoming().updatedAt == request.time)[m
+[32m+[m[32m                         )[m
+[32m+[m[32m                       )[m
+[32m+[m[32m                       // Request status protection (M7.6 Hardened)[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() || ([m
+[32m+[m[32m                           (!incoming().diff(existing()).affectedKeys().hasAny(['status'])) ||[m
+[32m+[m[32m                           (existing().get('status', 'ACCEPTED') == 'PENDING' &&[m
+[32m+[m[32m                            incoming().get('status', '') in ['ACCEPTED', 'IGNORED'] &&[m
+[32m+[m[32m                            existing().get('initiatorId', '') != '' &&[m
+[32m+[m[32m                            (existing().get('initiatorId', '') == existing().get('buyerId', '') ||[m
+[32m+[m[32m                             existing().get('initiatorId', '') == existing().get('sellerId', '')) &&[m
+[32m+[m[32m                            existing().get('initiatorId', '') != request.auth.uid &&[m
+[32m+[m[32m                            (existing().get('buyerId', '') == request.auth.uid || existing().get('sellerId', '') == request.auth.uid))[m
+[32m+[m[32m                         )[m
+[32m+[m[32m                       )[m
+[32m+[m[32m                       && ([m
+[32m+[m[32m                         isAdmin() ||[m
+[32m+[m[32m                         // If not modifying block state, allow[m
+[32m+[m[32m                         !incoming().diff(existing()).affectedKeys().hasAny(['isBlocked', 'blockedBy']) ||[m
+[32m+[m[32m                         // When establishing a block, caller must set blockedBy to their own UID[m
+[32m+[m[32m                         (incoming().get('isBlocked', false) == true && incoming().get('blockedBy', '') == request.auth.uid) ||[m
+[32m+[m[32m                         // When removing a block, only the blocker who placed it can unblock[m
+[32m+[m[32m                         (incoming().get('isBlocked', false) == false && existing().get('blockedBy', '') == request.auth.uid)[m
+[32m+[m[32m                       );[m
+[32m+[m[32m      allow delete: if isSignedIn() && (resource.data.get('buyerId', '') == request.auth.uid || resource.data.get('sellerId', '') == request.auth.uid || isAdmin());[m
+[32m+[m
+[32m+[m[32m      match /messages/{messageId} {[m
+[32m+[m[32m        allow read: if isSignedIn() && ([m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('buyerId', '') == request.auth.uid ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('sellerId', '') == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        );[m
+[32m+[m[32m        allow create: if ([m
+[32m+[m[32m          isNotBlocked() ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('sellerId', '') == 'ADMIN' ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('listingId', '') == 'SUPPORT' ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        ) && ([m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('buyerId', '') == request.auth.uid ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('sellerId', '') == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        ) && (incoming().senderId == request.auth.uid || isAdmin());[m
+[32m+[m[32m        allow update: if ([m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('buyerId', '') == request.auth.uid ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('sellerId', '') == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        ) && ([m
+[32m+[m[32m          // Admin override or strictly authorized field updates[m
+[32m+[m[32m          isAdmin() || ([m
+[32m+[m[32m            incoming().diff(existing()).affectedKeys().hasOnly(['deletedForUsers', 'status']) &&[m
+[32m+[m[32m            // If status is updated, it must be valid and cannot change content[m
+[32m+[m[32m            (!incoming().diff(existing()).affectedKeys().hasAny(['status']) || incoming().status in ['sent', 'delivered', 'seen']) &&[m
+[32m+[m[32m            // If deletedForUsers is updated, caller must retain all existing entries and only append their own UID[m
+[32m+[m[32m            (!incoming().diff(existing()).affectedKeys().hasAny(['deletedForUsers']) || ([m
+[32m+[m[32m              incoming().deletedForUsers is list &&[m
+[32m+[m[32m              incoming().deletedForUsers.hasAll(existing().get('deletedForUsers', [])) &&[m
+[32m+[m[32m              incoming().deletedForUsers.hasAll([request.auth.uid]) &&[m
+[32m+[m[32m              incoming().deletedForUsers.size() == (existing().get('deletedForUsers', []).size() + 1)[m
+[32m+[m[32m            ))[m
+[32m+[m[32m          )[m
+[32m+[m[32m        );[m
+[32m+[m[32m        allow delete: if isSignedIn() && ([m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('buyerId', '') == request.auth.uid ||[m
+[32m+[m[32m          get(/databases/$(database)/documents/chats/$(chatId)).data.get('sellerId', '') == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /cities/{cityId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create, update: if isSignedIn();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /verification_applications/{applicationId} {[m
+[32m+[m[32m      allow read: if isAdmin() || isPaymentVerifier() || (isSignedIn() && (resource == null || resource.data.userId == request.auth.uid));[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().userId == request.auth.uid &&[m
+[32m+[m[32m                    !('receivedAmount' in incoming()) &&[m
+[32m+[m[32m                    (!('verificationStage' in incoming()) || incoming().verificationStage == 'NONE');[m
+[32m+[m[32m      allow update: if isSuper() || ([m
+[32m+[m[32m        isAdmin() &&[m
+[32m+[m[32m        !(existing().get('refundStatus', '') == 'REFUNDED' && incoming().get('refundStatus', '') != 'REFUNDED') &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('refundStatus', '') != 'REFUNDED' ||[m
+[32m+[m[32m          existing().get('refundStatus', '') == 'VERIFIER_APPROVED' ||[m
+[32m+[m[32m          existing().get('refundStatus', '') == 'REFUNDED'[m
+[32m+[m[32m        )[m
+[32m+[m[32m      ) || ([m
+[32m+[m[32m        isPaymentVerifier() &&[m
+[32m+[m[32m        incoming().status != 'APPROVED' &&[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'refundedAt', 'refundedBy', 'refundedByUid', 'adminRefundProof'[m
+[32m+[m[32m        ]) &&[m
+[32m+[m[32m        incoming().get('refundStatus', '') != 'REFUNDED' &&[m
+[32m+[m[32m        !(existing().get('refundStatus', '') == 'REFUNDED' && incoming().get('refundStatus', '') != 'REFUNDED') &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('refundStatus', null) == existing().get('refundStatus', null) ||[m
+[32m+[m[32m          ([m
+[32m+[m[32m            existing().get('refundStatus', '') == 'SENT_TO_VERIFIERS' &&[m
+[32m+[m[32m            (incoming().get('refundStatus', '') == 'VERIFIER_APPROVED' || incoming().get('refundStatus', '') == 'VERIFIER_REJECTED')[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      ) || ([m
+[32m+[m[32m        isSignedIn() && existing().userId == request.auth.uid &&[m
+[32m+[m[32m        incoming().status == existing().status &&[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'receivedAmount', 'verificationStage', 'paymentVerifiedBy', 'paymentVerifiedByUid', 'paymentVerifiedAt',[m
+[32m+[m[32m          'rejectionCategory', 'rejectedAt', 'isRefundable', 'refundedAt', 'refundedBy', 'refundedByUid', 'verifierRejectReason', 'adminRefundProof',[m
+[32m+[m[32m          'refundCalculatedAmount', 'refundRetentionAmount', 'refundPercentage', 'refundRetentionPercentage'[m
+[32m+[m[32m        ]) &&[m
+[32m+[m[32m        existing().status == 'REJECTED' &&[m
+[32m+[m[32m        existing().get('verificationStage', '') == 'PAYMENT_VERIFIED' &&[m
+[32m+[m[32m        existing().get('receivedAmount', 0) > 0 &&[m
+[32m+[m[32m        existing().get('rejectionCategory', '') != 'FRAUD' &&[m
+[32m+[m[32m        existing().get('rejectionCategory', '') != 'NON_PAYMENT' &&[m
+[32m+[m[32m        existing().get('refundStatus', '') != 'REFUNDED' &&[m
+[32m+[m[32m        existing().get('refundRequested', false) == false &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          existing().get('rejectedAt', null) != null[m
+[32m+[m[32m            ? request.time < existing().rejectedAt + duration.value(7, 'd')[m
+[32m+[m[32m            : (existing().get('updatedAt', null) != null ? request.time < existing().updatedAt + duration.value(7, 'd') : false)[m
+[32m+[m[32m        ) &&[m
+[32m+[m[32m        incoming().get('refundRequested', false) == true &&[m
+[32m+[m[32m        incoming().get('refundStatus', '') == 'PENDING' &&[m
+[32m+[m[32m        incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m          'refundRequested', 'refundRequestedAt', 'refundStatus',[m
+[32m+[m[32m          'refundName', 'refundBankName', 'refundAccountNumber', 'refundProofImages', 'refundProofImage',[m
+[32m+[m[32m          'updatedAt'[m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /kyc_applications/{appDocId} {[m
+[32m+[m[32m      allow read: if isKycAdmin() || (isSignedIn() && (appDocId == request.auth.uid || resource.data.userId == request.auth.uid));[m
+[32m+[m[32m      allow create: if isKycAdmin() || ([m
+[32m+[m[32m        isSignedIn() &&[m
+[32m+[m[32m        (appDocId == request.auth.uid || incoming().userId == request.auth.uid) &&[m
+[32m+[m[32m        incoming().status == 'PENDING' &&[m
+[32m+[m[32m        !('approvedAt' in incoming()) &&[m
+[32m+[m[32m        !('approvedBy' in incoming()) &&[m
+[32m+[m[32m        !('rejectedAt' in incoming()) &&[m
+[32m+[m[32m        !('revokedAt' in incoming()) &&[m
+[32m+[m[32m        !('rejectionReason' in incoming()) &&[m
+[32m+[m[32m        !('revocationReason' in incoming())[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update: if isKycAdmin() || ([m
+[32m+[m[32m        isSignedIn() &&[m
+[32m+[m[32m        (appDocId == request.auth.uid || existing().userId == request.auth.uid) &&[m
+[32m+[m[32m        (!incoming().diff(existing()).affectedKeys().hasAny(['status']) || incoming().status in ['PENDING', 'RESUME_REQUESTED']) &&[m
+[32m+[m[32m        incoming().status != 'APPROVED' &&[m
+[32m+[m[32m        incoming().status != 'REJECTED' &&[m
+[32m+[m[32m        incoming().status != 'REVOKED' &&[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'approvedAt', 'approvedBy', 'rejectedAt', 'revokedAt', 'rejectionReason', 'revocationReason', 'appealRejectionReason'[m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isKycAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /kyc_private/{userId} {[m
+[32m+[m[32m      allow read: if isKycAdmin() || (isSignedIn() && userId == request.auth.uid);[m
+[32m+[m[32m      allow create: if isKycAdmin() || ([m
+[32m+[m[32m        isSignedIn() && userId == request.auth.uid &&[m
+[32m+[m[32m        !('status' in incoming()) &&[m
+[32m+[m[32m        !('kycStatus' in incoming()) &&[m
+[32m+[m[32m        !('isKycVerified' in incoming()) &&[m
+[32m+[m[32m        !('isVerified' in incoming()) &&[m
+[32m+[m[32m        !('verifiedBadgeType' in incoming()) &&[m
+[32m+[m[32m        !('approvedAt' in incoming()) &&[m
+[32m+[m[32m        !('approvedBy' in incoming()) &&[m
+[32m+[m[32m        !('rejectedAt' in incoming()) &&[m
+[32m+[m[32m        !('rejectedBy' in incoming()) &&[m
+[32m+[m[32m        !('rejectionReason' in incoming()) &&[m
+[32m+[m[32m        !('revokedAt' in incoming()) &&[m
+[32m+[m[32m        !('revokedBy' in incoming()) &&[m
+[32m+[m[32m        !('revocationReason' in incoming()) &&[m
+[32m+[m[32m        !('resumedAt' in incoming()) &&[m
+[32m+[m[32m        !('resumedBy' in incoming()) &&[m
+[32m+[m[32m        !('appealRejectedAt' in incoming()) &&[m
+[32m+[m[32m        !('appealRejectedBy' in incoming()) &&[m
+[32m+[m[32m        !('appealRejectionReason' in incoming()) &&[m
+[32m+[m[32m        !('adminNotes' in incoming()) &&[m
+[32m+[m[32m        !('reviewerId' in incoming()) &&[m
+[32m+[m[32m        !('reviewerName' in incoming())[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update: if isKycAdmin() || ([m
+[32m+[m[32m        isSignedIn() && userId == request.auth.uid &&[m
+[32m+[m[32m        !incoming().diff(existing()).affectedKeys().hasAny([[m
+[32m+[m[32m          'status', 'kycStatus', 'isKycVerified', 'isVerified', 'verifiedBadgeType',[m
+[32m+[m[32m          'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'rejectionReason',[m
+[32m+[m[32m          'revokedAt', 'revokedBy', 'revocationReason', 'resumedAt', 'resumedBy',[m
+[32m+[m[32m          'appealRejectedAt', 'appealRejectedBy', 'appealRejectionReason',[m
+[32m+[m[32m          'adminNotes', 'reviewerId', 'reviewerName'[m
+[32m+[m[32m        ])[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isKycAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /profile_update_requests/{requestId} {[m
+[32m+[m[32m      allow read: if isAdmin() || (isSignedIn() && (resource == null || resource.data.userId == request.auth.uid));[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().userId == request.auth.uid;[m
+[32m+[m[32m      allow update: if isAdmin();[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /name_change_requests/{requestId} {[m
+[32m+[m[32m      allow read: if isAdmin() || (isSignedIn() && (resource == null || resource.data.userId == request.auth.uid));[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().userId == request.auth.uid;[m
+[32m+[m[32m      allow update: if isAdmin();[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /arena_auctions/{auctionId} {[m
+[32m+[m[32m      function isValidAuction(data) {[m
+[32m+[m[32m        return data.keys().hasAll(['title', 'startingPrice', 'currentBid', 'status', 'sellerId', 'startTime', 'endTime', 'createdAt', 'updatedAt'])[m
+[32m+[m[32m          && !data.keys().hasAny(['contactEmail', 'contactNumber', 'address'])[m
+[32m+[m[32m          && data.title is string && data.title.size() > 0[m
+[32m+[m[32m          && data.startingPrice is number && data.startingPrice >= 0[m
+[32m+[m[32m          && data.currentBid is number && data.currentBid >= 0[m
+[32m+[m[32m          && data.status in ['upcoming', 'active', 'paused', 'ended', 'sold'][m
+[32m+[m[32m          && data.sellerId is string[m
+[32m+[m[32m          && data.startTime is timestamp[m
+[32m+[m[32m          && data.endTime is timestamp;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create: if isNotBlocked() && isValidAuction(incoming()) && ([m
+[32m+[m[32m        (incoming().get('isNegotiationOnly', false) == false && incoming().sellerId == request.auth.uid) ||[m
+[32m+[m[32m        ([m
+[32m+[m[32m          incoming().get('isNegotiationOnly', false) == true &&[m
+[32m+[m[32m          existsAfter(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&[m
+[32m+[m[32m          getAfter(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow delete: if isAdmin() || (isSignedIn() && ([m
+[32m+[m[32m        existing().sellerId == request.auth.uid ||[m[41m [m
+[32m+[m[32m        existing().get('userId', '') == request.auth.uid ||[m[41m [m
+[32m+[m[32m        existing().get('ownerId', '') == request.auth.uid ||[m
+[32m+[m[32m        (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&[m
+[32m+[m[32m         get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)[m
+[32m+[m[32m      ));[m
+[32m+[m[32m      allow update: if isAdmin() || ([m
+[32m+[m[32m        isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && ([m
+[32m+[m[32m          // Action: Bid[m
+[32m+[m[32m          (incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime', 'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts']) &&[m
+[32m+[m[32m           incoming().diff(existing()).affectedKeys().hasOnly(['currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime', 'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts']) &&[m
+[32m+[m[32m           incoming().currentBid > existing().currentBid &&[m
+[32m+[m[32m           (incoming().highestBidderId == request.auth.uid || incoming().highestBidderId == 'simulator_bot_bidder') &&[m
+[32m+[m[32m           (incoming().extensionsCount <= (existing().get('maxExtensions', 10)))[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Action: Private Negotiation Offer / Offer Acceptance / Status update[m
+[32m+[m[32m          (incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'bidsCount', 'status', 'updatedAt']) &&[m
+[32m+[m[32m           incoming().diff(existing()).affectedKeys().hasOnly(['currentBid', 'bidsCount', 'status', 'updatedAt', 'highestBidderId', 'highestBidderName', 'isExtended', 'reserveMet', 'extensionsCount', 'orderId', 'soldAt'])[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          // Action: View/Watch[m
+[32m+[m[32m          (incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'])) ||[m
+[32m+[m[32m          // Action: Status Change (Owner or System)[m
+[32m+[m[32m          (([m
+[32m+[m[32m            existing().sellerId == request.auth.uid ||[m[41m [m
+[32m+[m[32m            existing().get('userId', '') == request.auth.uid ||[m[41m [m
+[32m+[m[32m            existing().get('ownerId', '') == request.auth.uid ||[m
+[32m+[m[32m            (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&[m
+[32m+[m[32m             get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)[m
+[32m+[m[32m          ) && incoming().diff(existing()).affectedKeys().hasOnly([[m
+[32m+[m[32m            'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',[m
+[32m+[m[32m            'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt',[m[41m [m
+[32m+[m[32m            'pausedRemainingTimeMs', 'remainingDurationMs', 'endTime', 'featuredUntil', 'boostedUntil',[m
+[32m+[m[32m            'launchType', 'startTime', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt'[m
+[32m+[m[32m          ])) ||[m
+[32m+[m[32m          // Action: Full Update (Owner only if not active)[m
+[32m+[m[32m          (([m
+[32m+[m[32m            existing().sellerId == request.auth.uid ||[m
+[32m+[m[32m            (exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&[m
+[32m+[m[32m             get(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller).data.sellerUid == request.auth.uid)[m
+[32m+[m[32m          ) && existing().status == 'upcoming' && isValidAuction(incoming()))[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m
+[32m+[m[32m      match /private/seller {[m
+[32m+[m[32m        allow read: if isSignedIn() && (resource.data.sellerUid == request.auth.uid || isAdmin());[m
+[32m+[m[32m        allow create: if isSignedIn() &&[m
+[32m+[m[32m          incoming().sellerUid == request.auth.uid &&[m
+[32m+[m[32m          !exists(/databases/$(database)/documents/arena_auctions/$(auctionId)/private/seller) &&[m
+[32m+[m[32m          existsAfter(/databases/$(database)/documents/arena_auctions/$(auctionId));[m
+[32m+[m[32m        allow update: if false;[m
+[32m+[m[32m        allow delete: if isAdmin();[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      match /bids/{bidId} {[m
+[32m+[m[32m        allow read: if true;[m
+[32m+[m[32m        allow create, update: if isNotBlocked()[m[41m [m
+[32m+[m[32m          && (incoming().userId == request.auth.uid || incoming().userId == 'simulator_bot_bidder' || isAdmin());[m
+[32m+[m[32m        allow delete: if isNotBlocked() && ([m
+[32m+[m[32m          existing().userId == request.auth.uid ||[m
+[32m+[m[32m          request.auth.uid == 'simulator_bot_bidder' ||[m
+[32m+[m[32m          isAdmin() ||[m
+[32m+[m[32m          existing().get('sellerId', '') == request.auth.uid[m
+[32m+[m[32m        );[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m[41m    [m
+[32m+[m[32m    match /{path=**}/bids/{bidId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create, update: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m      allow delete: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /{path=**}/private/{docId} {[m
+[32m+[m[32m      allow list: if isSignedIn() &&[m
+[32m+[m[32m        resource.data.keys().hasAll(['sellerUid']) &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          resource.data.sellerUid == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        );[m
+[32m+[m[32m      allow get: if isSignedIn() &&[m
+[32m+[m[32m        docId == 'seller' &&[m
+[32m+[m[32m        resource.data.keys().hasAll(['sellerUid']) &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          resource.data.sellerUid == request.auth.uid ||[m
+[32m+[m[32m          isAdmin()[m
+[32m+[m[32m        );[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /arena_negotiations/{negotiationId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create, update: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m      allow delete: if isAdmin() || (isSignedIn() && ([m
+[32m+[m[32m        existing().sellerId == request.auth.uid ||[m[41m [m
+[32m+[m[32m        existing().buyerId == request.auth.uid ||[m
+[32m+[m[32m        existing().get('userId', '') == request.auth.uid[m
+[32m+[m[32m      ));[m
+[32m+[m
+[32m+[m[32m      match /offers/{offerId} {[m
+[32m+[m[32m        allow read: if true;[m
+[32m+[m[32m        allow create, update, delete: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /negotiation_channels/{channelId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create, update: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m      allow delete: if isAdmin() || (isSignedIn() && ([m
+[32m+[m[32m        existing().sellerId == request.auth.uid ||[m[41m [m
+[32m+[m[32m        existing().buyerId == request.auth.uid ||[m
+[32m+[m[32m        existing().get('userId', '') == request.auth.uid[m
+[32m+[m[32m      ));[m
+[32m+[m
+[32m+[m[32m      match /offers/{offerId} {[m
+[32m+[m[32m        allow read: if true;[m
+[32m+[m[32m        allow create, update, delete: if isNotBlocked() && isSignedIn();[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /arena_reports/{reportId} {[m
+[32m+[m[32m      allow read: if isAdmin() || (isSignedIn() && resource.data.reporterId == request.auth.uid);[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().reporterId == request.auth.uid;[m
+[32m+[m[32m      allow update, delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /arena_risk_scores/{scoreId} {[m
+[32m+[m[32m      allow read: if isAdmin() || (isSignedIn() && resource.data.get('userId', '') == request.auth.uid);[m
+[32m+[m[32m      allow create, update: if isSignedIn();[m
+[32m+[m[32m      allow delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /arena_audit_logs/{logId} {[m
+[32m+[m[32m      allow read: if isAdmin();[m
+[32m+[m[32m      allow create: if isAdmin() || (isSignedIn() && (incoming().get('userId', '') == request.auth.uid || incoming().get('moderatorId', '') == request.auth.uid));[m
+[32m+[m[32m      allow update, delete: if isAdmin();[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /blocks/{blockId} {[m
+[32m+[m[32m      allow get: if isSignedIn() && (resource.data.blockerId == request.auth.uid || resource.data.blockedId == request.auth.uid);[m
+[32m+[m[32m      allow list: if isSignedIn();[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().blockerId == request.auth.uid;[m
+[32m+[m[32m      allow delete: if isSignedIn() && resource.data.blockerId == request.auth.uid;[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /usernames/{usernameId} {[m
+[32m+[m[32m      allow read: if true;[m
+[32m+[m[32m      allow create: if isSignedIn() && incoming().get('uid', '') == request.auth.uid;[m
+[32m+[m[32m      allow update, delete: if isAdmin() || (isSignedIn() && existing().get('uid', '') == request.auth.uid);[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /trust_events/{eventId} {[m
+[32m+[m[32m      function isValidTrustEvent(data) {[m
+[32m+[m[32m        return data.keys().hasAll(['id', 'deduplicationKey', 'userId', 'eventType', 'scoreDelta', 'previousScore', 'resultingScore', 'relatedEntityId', 'sourceModule', 'reason', 'createdBy', 'createdAt'])[m
+[32m+[m[32m          && data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128[m
+[32m+[m[32m          && data.eventType in ['DEAL_COMPLETED_BUYER', 'DEAL_COMPLETED_SELLER', 'DISPUTE_WON_EXONERATED', 'CLEAN_HISTORY_MILESTONE', 'ADMIN_FAULT_BUYER_DEFAULT', 'ADMIN_FAULT_SELLER_DEFAULT', 'ADMIN_FAULT_FABRICATED_DISPUTE', 'ADMIN_FAULT_FRAUD_COUNTERFEIT', 'ADMIN_FAULT_SHILL_COLLUSION', 'ADMIN_MANUAL_ADJUSTMENT'][m
+[32m+[m[32m          && data.sourceModule in ['MARKETPLACE', 'BATTLE_BIDS', 'NEGOTIATION', 'DISPUTE_SYSTEM', 'ADMIN'][m
+[32m+[m[32m          && data.scoreDelta is number[m
+[32m+[m[32m          && data.previousScore is number && data.previousScore >= 0 && data.previousScore <= 100[m
+[32m+[m[32m          && data.resultingScore is number && data.resultingScore >= 0 && data.resultingScore <= 100[m
+[32m+[m[32m          && data.createdBy is string && data.createdBy == request.auth.uid;[m
+[32m+[m[32m      }[m
+[32m+[m
+[32m+[m[32m      allow get: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow list: if isAdmin() || (isSignedIn() && resource.data.get('userId', '') == request.auth.uid);[m
+[32m+[m[32m      allow create: if isAdmin() && isValidTrustEvent(incoming());[m
+[32m+[m[32m      allow update, delete: if false; // Immutable ledger[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /credit_transactions/{transactionId} {[m
+[32m+[m[32m      allow get: if isSignedIn() && (resource.data.get('userId', '') == request.auth.uid || isAdmin());[m
+[32m+[m[32m      allow list: if isAdmin() || (isSignedIn() && resource.data.get('userId', '') == request.auth.uid);[m
+[32m+[m[32m      allow create: if isAdmin() || ([m
+[32m+[m[32m        // Action: Bid or Negotiation credit transaction ledger creation[m
+[32m+[m[32m        isSignedIn() &&[m
+[32m+[m[32m        isNotBlocked() &&[m
+[32m+[m[32m        incoming().userId == request.auth.uid &&[m
+[32m+[m[32m        ([m
+[32m+[m[32m          ([m
+[32m+[m[32m            incoming().amount == -1 &&[m
+[32m+[m[32m            ([m
+[32m+[m[32m              (incoming().type in ['AUCTION_BID_DEDUCT', 'AUCTION_BID'] && incoming().sourceModule in ['AUCTION', 'BATTLE_BIDS']) ||[m
+[32m+[m[32m              (incoming().type in ['NEGOTIATION_OFFER', 'NEGOTIATION_OFFER_DEDUCT'] && incoming().sourceModule in ['NEGOTIATION', 'PRIVATE_NEGOTIATION'])[m
+[32m+[m[32m            ) &&[m
+[32m+[m[32m            incoming().status == 'COMPLETED' &&[m
+[32m+[m[32m            incoming().createdBy == request.auth.uid[m
+[32m+[m[32m          ) ||[m
+[32m+[m[32m          ([m
+[32m+[m[32m            // Action: Private Negotiation listing posting fee ledger creation[m
+[32m+[m[32m            incoming().amount == -5 &&[m
+[32m+[m[32m            incoming().type == 'PRIVATE_NEGOTIATION_LISTING_POST' &&[m
+[32m+[m[32m            incoming().sourceModule == 'NEGOTIATION' &&[m
+[32m+[m[32m            incoming().status == 'COMPLETED'[m
+[32m+[m[32m          )[m
+[32m+[m[32m        )[m
+[32m+[m[32m      );[m
+[32m+[m[32m      allow update, delete: if false; // Immutable ledger[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    match /system_metrics/{metricId} {[m
+[32m+[m[32m      allow read: if metricId in ['marketplace', 'arena'] || (metricId == 'moderation' && isAdmin());[m
+[32m+[m[32m      allow write: if isAdmin();[m
+[32m+[m
+[32m+[m[32m      match /processed_events/{eventId} {[m
+[32m+[m[32m        allow read, write: if isAdmin();[m
+[32m+[m[32m      }[m
+[32m+[m[32m    }[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m

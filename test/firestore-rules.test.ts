@@ -56,7 +56,7 @@ function isPermissionDenied(err: any) {
       `FALSE CONFIDENCE DETECTED: Operation denied due to rules expression limit, not security rules: ${message}`
     );
   }
-  return err?.code === 'permission-denied' || /permission-denied/i.test(message);
+  return !/evaluation error:/i.test(message) && (err?.code === 'permission-denied' || /permission-denied/i.test(message));
 }
 
 test('Test Harness: isPermissionDenied detects and rejects expression-limit failure', () => {
@@ -82,7 +82,7 @@ test('Test Harness: isPermissionDenied does not misclassify unrelated evaluation
   const unrelatedError = new Error('7 PERMISSION_DENIED: evaluation error: property foo does not exist on null');
   (unrelatedError as any).code = 'permission-denied';
 
-  assert.strictEqual(isPermissionDenied(unrelatedError), true);
+  assert.strictEqual(isPermissionDenied(unrelatedError), false);
 });
 
 // ==========================================
