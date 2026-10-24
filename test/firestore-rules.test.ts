@@ -911,7 +911,7 @@ test('Arena Auctions 16: Winning-bidder settlement past endTime allowed', async 
   await assert.doesNotReject(
     () => winnerDb.collection('arena_auctions').doc('auc_settle_win').update({
       status: 'sold',
-      orderId: 'ord_settle_123',
+      orderId: 'BB-auc_settle_win',
       soldAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     })
@@ -1127,3 +1127,423 @@ test('Arena Auctions 23: Mixed-operation tampering (lifecycle + unwhitelisted pr
   );
 });
 
+test('Arena Auctions 24: Ordinary cancellation without removal fields allowed', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_cancel_plain').set({
+      title: 'Active to Plain Cancel',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: new Date(Date.now() + 3600 * 1000),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_cancel_plain').update({
+      status: 'cancelled',
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 25: Cancellation with full atomic soft-removal allowed', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_cancel_full').set({
+      title: 'Active to Soft Remove',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: new Date(Date.now() + 3600 * 1000),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_cancel_full').update({
+      status: 'cancelled',
+      isPermanentlyRemoved: true,
+      removedBy: 'user_seller_100',
+      removedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 26: Seller settlement to sold with orderId and soldAt allowed', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_seller_sold').set({
+      title: 'Active to Settle Sold',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.doesNotReject(
+    () => sellerDb.collection('arena_auctions').doc('auc_seller_sold').update({
+      status: 'sold',
+      orderId: 'BB-auc_seller_sold',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 27: Partial removal tuple (missing removedAt) denied', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_partial_remat').set({
+      title: 'Cancel Missing removedAt',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: new Date(Date.now() + 3600 * 1000),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_partial_remat').update({
+      status: 'cancelled',
+      isPermanentlyRemoved: true,
+      removedBy: 'user_seller_100',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 28: Spoofed removedBy attribution denied', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_spoof_remby').set({
+      title: 'Cancel Spoofed removedBy',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: new Date(Date.now() + 3600 * 1000),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_spoof_remby').update({
+      status: 'cancelled',
+      isPermanentlyRemoved: true,
+      removedBy: 'admin_user_override',
+      removedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 29: Client-supplied manual timestamp for removedAt denied', async () => {
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_manual_time').set({
+      title: 'Cancel Manual Time',
+      startingPrice: 100,
+      currentBid: 100,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: serverTimestamp(),
+      endTime: new Date(Date.now() + 3600 * 1000),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_manual_time').update({
+      status: 'cancelled',
+      isPermanentlyRemoved: true,
+      removedBy: 'user_seller_100',
+      removedAt: new Date(Date.now() - 3600 * 1000),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 30: Order injection on settlement to ended denied', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_ended_fake_order').set({
+      title: 'Ended Fake Order',
+      startingPrice: 500,
+      currentBid: 500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_ended_fake_order').update({
+      status: 'ended',
+      orderId: 'fake_ord_999',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 31: Winning-bidder order injection on settlement to ended denied', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_win_ended_fake_order').set({
+      title: 'Ended Fake Order Winner',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_win_ended_fake_order').update({
+      status: 'ended',
+      orderId: 'fake_ord_winner_999',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 32: Valid canonical settlement using serverTimestamp and BB- prefix allowed', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_canon_settle').set({
+      title: 'Canonical Settlement Item',
+      startingPrice: 500,
+      currentBid: 1500,
+      reservePrice: 1000,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 2,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.doesNotReject(
+    () => winnerDb.collection('arena_auctions').doc('auc_canon_settle').update({
+      status: 'sold',
+      orderId: 'BB-auc_canon_settle',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    })
+  );
+});
+
+test('Arena Auctions 33: Arbitrary orderId rejected for seller settlement', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_seller_arb_order').set({
+      title: 'Arbitrary Order Seller',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_seller_arb_order').update({
+      status: 'sold',
+      orderId: 'arbitrary_order_id_999',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 34: Arbitrary orderId rejected for winner settlement', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_win_arb_order').set({
+      title: 'Arbitrary Order Winner',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_win_arb_order').update({
+      status: 'sold',
+      orderId: 'arbitrary_order_id_777',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 35: Forged soldAt timestamp rejected for settlement', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_forged_soldat').set({
+      title: 'Forged soldAt Item',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_forged_soldat').update({
+      status: 'sold',
+      orderId: 'BB-auc_forged_soldat',
+      soldAt: new Date(Date.now() - 1000),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 36: Partial orderId/soldAt changes rejected on settlement to sold', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_partial_settle').set({
+      title: 'Partial Settlement Item',
+      startingPrice: 500,
+      currentBid: 1200,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  // Missing soldAt
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_partial_settle').update({
+      status: 'sold',
+      orderId: 'BB-auc_partial_settle',
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+
+  // Missing orderId
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_partial_settle').update({
+      status: 'sold',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
+
+test('Arena Auctions 37: Reserve-price rules cannot be bypassed by setting status to sold', async () => {
+  const pastTime = new Date(Date.now() - 3600 * 1000);
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().collection('arena_auctions').doc('auc_reserve_bypass').set({
+      title: 'Unmet Reserve Bypass Attempt',
+      startingPrice: 500,
+      currentBid: 800,
+      reservePrice: 1500,
+      status: 'active',
+      sellerId: 'user_seller_100',
+      highestBidderId: 'user_winner_500',
+      bidsCount: 1,
+      startTime: new Date(Date.now() - 7200 * 1000),
+      endTime: pastTime,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  });
+
+  const winnerDb = testEnv.authenticatedContext('user_winner_500').firestore();
+  await assert.rejects(
+    () => winnerDb.collection('arena_auctions').doc('auc_reserve_bypass').update({
+      status: 'sold',
+      orderId: 'BB-auc_reserve_bypass',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+
+  const sellerDb = testEnv.authenticatedContext('user_seller_100').firestore();
+  await assert.rejects(
+    () => sellerDb.collection('arena_auctions').doc('auc_reserve_bypass').update({
+      status: 'sold',
+      orderId: 'BB-auc_reserve_bypass',
+      soldAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }),
+    isPermissionDenied
+  );
+});
