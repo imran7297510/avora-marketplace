@@ -1394,6 +1394,17 @@ service cloud.firestore {
         );
       }
 
+      function isAuctionUserActive() {
+        return isSignedIn() && (
+          !exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBlocked', false) == false &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == false &&
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('accountStatus', 'active') != 'banned'
+          )
+        );
+      }
+
       allow read: if true;
       allow create: if isNotBlocked() && isValidAuction(incoming()) && (
         (incoming().get('isNegotiationOnly', false) == false && incoming().sellerId == request.auth.uid) ||
@@ -1405,195 +1416,293 @@ service cloud.firestore {
       );
       allow delete: if isAdmin() || (isSignedIn() && isAuctionSeller());
       allow update: if isAdmin() || (
-        isNotBlocked() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && (
-          // Action 1: Legitimate Bid (Non-seller bidder on active, non-expired auction)
+        isAuctionUserActive() && !incoming().diff(existing()).affectedKeys().hasAny(['contactEmail', 'contactNumber', 'address']) && (
+          // ==============================================================
+          // PARTITION 1: STATUS LIFECYCLE TRANSITIONS (incoming().status != existing().status)
+          // ==============================================================
           (
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',
-              'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'
-            ]) &&
-            existing().status == 'active' &&
-            request.time < existing().endTime &&
-            !isAuctionSeller() &&
-            incoming().status == existing().status &&
-            incoming().sellerId == existing().sellerId &&
-            incoming().startingPrice == existing().startingPrice &&
-            incoming().startTime == existing().startTime &&
-            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
-            incoming().get('reservePrice', null) == existing().get('reservePrice', null) &&
-            incoming().currentBid > existing().currentBid &&
-            incoming().currentBid >= (existing().currentBid + existing().get('minIncrement', 1)) &&
-            incoming().highestBidderId == request.auth.uid &&
-            incoming().bidsCount == existing().get('bidsCount', 0) + 1 &&
-            existing().get('userBidCounts', {}).get(request.auth.uid, 0) < 10 &&
-            incoming().get('userBidCounts', {}).get(request.auth.uid, 0) == existing().get('userBidCounts', {}).get(request.auth.uid, 0) + 1 &&
-            incoming().get('userBidCounts', {}).diff(existing().get('userBidCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
-            incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&
-            (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm')))
-          ) ||
-          // Action 2: View/Watch counter increments
-          (
-            isSignedIn() &&
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'
-            ]) &&
-            incoming().status == existing().status &&
-            incoming().currentBid == existing().currentBid &&
-            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
-            incoming().sellerId == existing().sellerId &&
-            incoming().startingPrice == existing().startingPrice &&
-            incoming().startTime == existing().startTime &&
-            incoming().endTime == existing().endTime &&
+            incoming().status != existing().status &&
+            existing().get('isPermanentlyRemoved', false) == false &&
             (
-              !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||
+              (incoming().status != 'sold' && !incoming().diff(existing()).affectedKeys().hasAny(['orderId', 'soldAt'])) ||
               (
-                incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&
-                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
-                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
+                incoming().status == 'sold' &&
+                incoming().diff(existing()).affectedKeys().hasAll(['orderId', 'soldAt']) &&
+                incoming().get('orderId', '') == ('BB-' + auctionId) &&
+                incoming().get('soldAt', null) == request.time
               )
             ) &&
-            (
-              !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||
+            (incoming().status != 'sold' || existing().get('reservePrice', null) == null || existing().currentBid >= existing().reservePrice) && (
+              // Route 2A: Seller Lifecycle Status Changes
               (
-                incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&
-                incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&
-                incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1
-              )
-            ) &&
-            (
-              !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||
-              (
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+                  'isPaused', 'isPausedBySeller', 'pausedAt',
+                  'pausedRemainingTimeMs', 'remainingDurationMs',
+                  'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
+                  'startTime', 'endTime'
+                ]) &&
+                isAuctionSeller() &&
+                incoming().get('isPausedByAdmin', false) == existing().get('isPausedByAdmin', false) &&
+                (!incoming().diff(existing()).affectedKeys().hasAny(['isPermanentlyRemoved', 'removedBy', 'removedAt']) || (
+                  incoming().status == 'cancelled' &&
+                  incoming().diff(existing()).affectedKeys().hasAll(['isPermanentlyRemoved', 'removedBy', 'removedAt']) &&
+                  incoming().get('isPermanentlyRemoved', false) == true &&
+                  incoming().get('removedBy', '') == request.auth.uid &&
+                  incoming().get('removedAt', null) == request.time
+                )) &&
+                incoming().currentBid == existing().currentBid &&
+                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+                incoming().sellerId == existing().sellerId &&
+                incoming().startingPrice == existing().startingPrice &&
+                incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
                 (
-                  existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
-                  incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)
-                ) ||
-                (
-                  !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
+                  // Go Live
                   (
-                    incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||
+                    incoming().status == 'active' &&
+                    existing().status == 'upcoming' &&
+                    incoming().startTime >= request.time - duration.value(5, 'm') &&
+                    incoming().endTime > incoming().startTime
+                  ) ||
+                  // Pause by Seller
+                  (
+                    incoming().status == 'paused' &&
+                    existing().status == 'active' &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().endTime == existing().endTime
+                  ) ||
+                  // Resume by Seller (only if not admin-paused)
+                  (
+                    incoming().status == 'active' &&
+                    existing().status == 'paused' &&
+                    existing().get('isPausedByAdmin', false) == false &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().endTime > request.time
+                  ) ||
+                  // Cancel by Seller
+                  (
+                    incoming().status == 'cancelled' &&
+                    existing().status in ['upcoming', 'active', 'paused'] &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().endTime == existing().endTime
+                  ) ||
+                  // Settlement by Seller past endTime
+                  (
+                    incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
+                    existing().status == 'active' &&
+                    request.time >= existing().endTime &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().endTime == existing().endTime
+                  )
+                )
+              ) ||
+              // Route 2B: Client Settlement by Winning Bidder past endTime
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&
+                request.auth.uid == existing().get('highestBidderId', '') &&
+                existing().status == 'active' &&
+                request.time >= existing().endTime &&
+                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
+                incoming().currentBid == existing().currentBid &&
+                incoming().highestBidderId == existing().highestBidderId &&
+                incoming().sellerId == existing().sellerId &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime
+              )
+            )
+          ) ||
+
+          // ==============================================================
+          // PARTITION 2: SAME-STATUS OPERATIONS (incoming().status == existing().status)
+          // ==============================================================
+          (
+            incoming().status == existing().status && (
+              // SUBPARTITION 2A: Active Auction Operations (Bidding or Seller active metadata)
+              (
+                existing().status == 'active' && (
+                  // ROUTE 1: Bidding (Active auction modifying currentBid or highestBidder)
+                  (
+                    incoming().diff(existing()).affectedKeys().hasAny(['currentBid', 'highestBidderId', 'bidsCount']) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly([
+                      'currentBid', 'highestBidderId', 'highestBidderName', 'bidsCount', 'endTime',
+                      'extensionsCount', 'isExtended', 'reserveMet', 'updatedAt', 'userBidCounts'
+                    ]) &&
+                    request.time < existing().endTime &&
+                    !isAuctionSeller() &&
+                    incoming().sellerId == existing().sellerId &&
+                    incoming().startingPrice == existing().startingPrice &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
+                    incoming().get('reservePrice', null) == existing().get('reservePrice', null) &&
+                    incoming().currentBid > existing().currentBid &&
+                    incoming().currentBid >= (existing().currentBid + existing().get('minIncrement', 1)) &&
+                    incoming().highestBidderId == request.auth.uid &&
+                    incoming().bidsCount == existing().get('bidsCount', 0) + 1 &&
+                    existing().get('userBidCounts', {}).get(request.auth.uid, 0) < 10 &&
+                    incoming().get('userBidCounts', {}).get(request.auth.uid, 0) == existing().get('userBidCounts', {}).get(request.auth.uid, 0) + 1 &&
+                    incoming().get('userBidCounts', {}).diff(existing().get('userBidCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+                    incoming().get('extensionsCount', 0) <= existing().get('maxExtensions', 10) &&
+                    (incoming().endTime == existing().endTime || (incoming().endTime > existing().endTime && incoming().endTime <= existing().endTime + duration.value(2, 'm')))
+                  ) ||
+                  // Route 4B (Active subset): Same-status metadata update by Seller
+                  (
+                    incoming().diff(existing()).affectedKeys().hasOnly([
+                      'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+                      'isPaused', 'isPausedBySeller', 'pausedAt',
+                      'pausedRemainingTimeMs', 'remainingDurationMs',
+                      'launchType', 'startTime', 'endTime'
+                    ]) &&
+                    isAuctionSeller() &&
+                    existing().get('isPermanentlyRemoved', false) == false &&
+                    incoming().get('isPausedByAdmin', false) == existing().get('isPausedByAdmin', false) &&
+                    incoming().currentBid == existing().currentBid &&
+                    incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+                    incoming().sellerId == existing().sellerId &&
+                    incoming().startingPrice == existing().startingPrice &&
+                    incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
+                    incoming().startTime == existing().startTime &&
+                    incoming().endTime == existing().endTime
+                  )
+                )
+              ) ||
+              // SUBPARTITION 2B: Upcoming Draft Operations (Draft content or draft metadata)
+              (
+                existing().status == 'upcoming' && (
+                  !incoming().diff(existing()).affectedKeys().hasAny([
+                    'viewsCount', 'watchersCount', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts',
+                    'featuredUntil', 'boostedUntil', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt', 'isPausedByAdmin'
+                  ]) && (
+                    // Route 3A: Full draft content editing by seller
                     (
-                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&
-                      incoming().get('viewerUserIds', []).hasAny([request.auth.uid])
+                      isAuctionSeller() &&
+                      incoming().sellerId == existing().sellerId &&
+                      incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
+                      incoming().currentBid == incoming().startingPrice &&
+                      incoming().get('highestBidderId', '') == '' &&
+                      incoming().get('bidsCount', 0) == 0 &&
+                      existing().get('bidsCount', 0) == 0 &&
+                      !incoming().diff(existing()).affectedKeys().hasAny([
+                        'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'
+                      ]) &&
+                      isValidAuction(incoming())
+                    ) ||
+                    // Route 3B: Upcoming draft metadata update
+                    (
+                      incoming().diff(existing()).affectedKeys().hasOnly([
+                        'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+                        'isPaused', 'isPausedBySeller', 'pausedAt',
+                        'pausedRemainingTimeMs', 'remainingDurationMs',
+                        'launchType', 'startTime', 'endTime'
+                      ]) &&
+                      isAuctionSeller() &&
+                      incoming().currentBid == existing().currentBid &&
+                      incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+                      incoming().sellerId == existing().sellerId &&
+                      incoming().startingPrice == existing().startingPrice &&
+                      incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
+                      incoming().startTime == existing().startTime &&
+                      incoming().endTime == existing().endTime
+                    )
+                  )
+                )
+              ) ||
+              // SUBPARTITION 2C: Paused Auction Operations (Seller paused metadata)
+              (
+                existing().status == 'paused' && (
+                  incoming().diff(existing()).affectedKeys().hasOnly([
+                    'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
+                    'isPaused', 'isPausedBySeller', 'pausedAt',
+                    'pausedRemainingTimeMs', 'remainingDurationMs',
+                    'launchType', 'startTime', 'endTime'
+                  ]) &&
+                  isAuctionSeller() &&
+                  existing().get('isPermanentlyRemoved', false) == false &&
+                  incoming().get('isPausedByAdmin', false) == existing().get('isPausedByAdmin', false) &&
+                  incoming().currentBid == existing().currentBid &&
+                  incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+                  incoming().sellerId == existing().sellerId &&
+                  incoming().startingPrice == existing().startingPrice &&
+                  incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
+                  incoming().startTime == existing().startTime &&
+                  incoming().endTime == existing().endTime
+                )
+              ) ||
+              // SUBPARTITION 2D: Universal View/Watch Counter increments (Allowed across all statuses)
+              (
+                // Route 4A: View/Watch Counter increments
+                isSignedIn() &&
+                incoming().diff(existing()).affectedKeys().hasOnly([
+                  'viewsCount', 'watchersCount', 'updatedAt', 'viewerUserIds', 'uniqueViewersCount', 'userViewCounts'
+                ]) &&
+                incoming().currentBid == existing().currentBid &&
+                incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
+                incoming().sellerId == existing().sellerId &&
+                incoming().startingPrice == existing().startingPrice &&
+                incoming().startTime == existing().startTime &&
+                incoming().endTime == existing().endTime &&
+                (
+                  !incoming().diff(existing()).affectedKeys().hasAny(['viewsCount']) ||
+                  (
+                    incoming().viewsCount == existing().get('viewsCount', 0) + 1 &&
+                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
+                  )
+                ) &&
+                (
+                  !incoming().diff(existing()).affectedKeys().hasAny(['viewerUserIds']) ||
+                  (
+                    incoming().viewerUserIds.hasAll(existing().get('viewerUserIds', [])) &&
+                    incoming().viewerUserIds.toSet().difference(existing().get('viewerUserIds', []).toSet()).hasOnly([request.auth.uid]) &&
+                    incoming().viewerUserIds.size() <= existing().get('viewerUserIds', []).size() + 1
+                  )
+                ) &&
+                (
+                  !incoming().diff(existing()).affectedKeys().hasAny(['uniqueViewersCount']) ||
+                  (
+                    (
+                      existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
+                      incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0)
+                    ) ||
+                    (
+                      !existing().get('viewerUserIds', []).hasAny([request.auth.uid]) &&
+                      (
+                        incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) ||
+                        (
+                          incoming().get('uniqueViewersCount', 0) == existing().get('uniqueViewersCount', 0) + 1 &&
+                          incoming().get('viewerUserIds', []).hasAny([request.auth.uid])
+                        )
+                      )
+                    )
+                  )
+                ) &&
+                (
+                  !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||
+                  (
+                    incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
+                    incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
+                  )
+                ) &&
+                (
+                  !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||
+                  (
+                    (
+                      incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&
+                      !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
+                      existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
+                    ) ||
+                    (
+                      incoming().watchersCount >= 0 &&
+                      incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&
+                      exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
+                      !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
+                    ) ||
+                    (
+                      incoming().watchersCount == existing().get('watchersCount', 0)
                     )
                   )
                 )
               )
-            ) &&
-            (
-              !incoming().diff(existing()).affectedKeys().hasAny(['userViewCounts']) ||
-              (
-                incoming().get('userViewCounts', {}).diff(existing().get('userViewCounts', {})).affectedKeys().hasOnly([request.auth.uid]) &&
-                incoming().get('userViewCounts', {}).get(request.auth.uid, 0) == existing().get('userViewCounts', {}).get(request.auth.uid, 0) + 1
-              )
-            ) &&
-            (
-              !incoming().diff(existing()).affectedKeys().hasAny(['watchersCount']) ||
-              (
-                (
-                  incoming().watchersCount == existing().get('watchersCount', 0) + 1 &&
-                  !exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
-                  existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
-                ) ||
-                (
-                  incoming().watchersCount >= 0 &&
-                  incoming().watchersCount == existing().get('watchersCount', 0) - 1 &&
-                  exists(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId)) &&
-                  !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/watchlist/$(auctionId))
-                ) ||
-                (
-                  incoming().watchersCount == existing().get('watchersCount', 0)
-                )
-              )
             )
-          ) ||
-          // Action 3: Seller Lifecycle / Status Management (Go live, Pause, Resume, Cancel, Client Settle past endTime)
-          (
-            incoming().diff(existing()).affectedKeys().hasOnly([
-              'status', 'appealStatus', 'appealMessage', 'appealSubmittedAt', 'updatedAt',
-              'isPaused', 'isPausedBySeller', 'isPausedByAdmin', 'pausedAt', 
-              'pausedRemainingTimeMs', 'remainingDurationMs', 'featuredUntil', 'boostedUntil',
-              'launchType', 'orderId', 'soldAt', 'isPermanentlyRemoved', 'removedBy', 'removedAt',
-              'startTime', 'endTime'
-            ]) &&
-            isAuctionSeller() &&
-            incoming().currentBid == existing().currentBid &&
-            incoming().get('highestBidderId', '') == existing().get('highestBidderId', '') &&
-            incoming().sellerId == existing().sellerId &&
-            incoming().startingPrice == existing().startingPrice &&
-            incoming().get('bidsCount', 0) == existing().get('bidsCount', 0) &&
-            (
-              // Go Live
-              (
-                incoming().status == 'active' &&
-                existing().status == 'upcoming' &&
-                incoming().startTime >= request.time - duration.value(5, 'm') &&
-                incoming().endTime > incoming().startTime
-              ) ||
-              // Pause
-              (
-                incoming().status == 'paused' &&
-                existing().status == 'active' &&
-                incoming().startTime == existing().startTime &&
-                incoming().endTime == existing().endTime
-              ) ||
-              // Resume
-              (
-                incoming().status == 'active' &&
-                existing().status == 'paused' &&
-                incoming().startTime == existing().startTime &&
-                incoming().endTime > request.time
-              ) ||
-              // Cancel
-              (
-                incoming().status == 'cancelled' &&
-                existing().status in ['upcoming', 'active', 'paused'] &&
-                incoming().startTime == existing().startTime &&
-                incoming().endTime == existing().endTime
-              ) ||
-              // Settlement by Seller past endTime
-              (
-                incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
-                existing().status == 'active' &&
-                request.time >= existing().endTime &&
-                incoming().startTime == existing().startTime &&
-                incoming().endTime == existing().endTime
-              ) ||
-              // Metadata update in same status
-              (
-                incoming().status == existing().status &&
-                incoming().startTime == existing().startTime &&
-                incoming().endTime == existing().endTime
-              )
-            )
-          ) ||
-          // Action 4: Client Settlement by Winning Bidder past endTime
-          (
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'orderId', 'soldAt', 'updatedAt']) &&
-            request.auth.uid == existing().get('highestBidderId', '') &&
-            existing().status == 'active' &&
-            request.time >= existing().endTime &&
-            incoming().status in ['sold', 'ended', 'reserve-not-met'] &&
-            incoming().currentBid == existing().currentBid &&
-            incoming().highestBidderId == existing().highestBidderId &&
-            incoming().sellerId == existing().sellerId &&
-            incoming().startTime == existing().startTime &&
-            incoming().endTime == existing().endTime
-          ) ||
-          // Action 5: Full Update for upcoming draft auctions (Owner only)
-          (
-            existing().status == 'upcoming' &&
-            isAuctionSeller() &&
-            incoming().status == 'upcoming' &&
-            incoming().sellerId == existing().sellerId &&
-            incoming().get('isNegotiationOnly', false) == existing().get('isNegotiationOnly', false) &&
-            incoming().currentBid == incoming().startingPrice &&
-            incoming().get('highestBidderId', '') == '' &&
-            incoming().get('bidsCount', 0) == 0 &&
-            existing().get('bidsCount', 0) == 0 &&
-            !incoming().diff(existing()).affectedKeys().hasAny([
-              'orderId', 'soldAt', 'reserveMet', 'highestBidderId', 'highestBidderName', 'bidsCount', 'userBidCounts', 'isExtended', 'extensionsCount', 'status'
-            ]) &&
-            isValidAuction(incoming())
           )
         )
       );
